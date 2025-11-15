@@ -62,29 +62,46 @@ def _show_input_box(user_id: int, rag_service, session_service):
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # 生成回复
+        # 生成回复（流式）
         with st.chat_message("assistant"):
-            with st.spinner("🤔 思考中..."):
-                # 执行 RAG 查询
-                result = rag_service.query(user_id, prompt)
+            # 执行流式 RAG 查询
+            answer_placeholder = st.empty()
+            full_answer = ""
+            result = None
+            thinking_process = None
+            
+            # 流式生成答案
+            for response in rag_service.query_stream(user_id, prompt):
+                if response['type'] == 'thinking':
+                    # 思考过程信息（可以先显示，但为了不影响流式体验，我们稍后显示）
+                    thinking_process = response['thinking_process']
                 
-                # 显示答案
-                st.markdown(result['answer'])
+                elif response['type'] == 'chunk':
+                    # 答案片段，实时显示
+                    full_answer += response['content']
+                    answer_placeholder.markdown(full_answer)
                 
-                # 显示检索结果
-                if result['retrieved_docs']:
-                    _show_retrieved_docs(result['retrieved_docs'])
-                
-                # 显示思考过程
-                if result['thinking_process']:
-                    _show_thinking_process(result['thinking_process'])
-                
-                # 添加到消息列表
+                elif response['type'] == 'complete':
+                    # 完整结果
+                    result = response
+                    # 确保完整答案已显示
+                    answer_placeholder.markdown(result['answer'])
+            
+            # 显示检索结果
+            if result and result.get('retrieved_docs'):
+                _show_retrieved_docs(result['retrieved_docs'])
+            
+            # 显示思考过程
+            if result and result.get('thinking_process'):
+                _show_thinking_process(result['thinking_process'])
+            
+            # 添加到消息列表
+            if result:
                 st.session_state.chat_messages.append({
                     "role": "assistant",
                     "content": result['answer'],
-                    "retrieved_docs": result['retrieved_docs'],
-                    "thinking_process": result['thinking_process']
+                    "retrieved_docs": result.get('retrieved_docs'),
+                    "thinking_process": result.get('thinking_process')
                 })
                 
                 # 保存到数据库

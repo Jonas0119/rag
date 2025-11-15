@@ -2,7 +2,7 @@
 RAG 服务 - 检索增强生成
 """
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Generator
 import time
 
 from langchain_anthropic import ChatAnthropic
@@ -148,6 +148,147 @@ class RAGService:
         
         return {
             'answer': answer,
+            'retrieved_docs': retrieved_docs,
+            'thinking_process': thinking_process,
+            'elapsed_time': elapsed_time,
+            'tokens_used': estimated_tokens
+        }
+    
+    def query_stream(self, user_id: int, question: str, k: int = None) -> Generator[Dict, None, None]:
+        """
+        流式执行 RAG 查询
+        
+        Args:
+            user_id: 用户 ID
+            question: 用户问题
+            k: 检索数量
+        
+        Yields:
+            字典，包含不同类型的信息：
+            - type='thinking': 思考过程信息
+              {
+                  'type': 'thinking',
+                  'thinking_process': List[Dict]
+              }
+            - type='chunk': 答案片段
+              {
+                  'type': 'chunk',
+                  'content': str  # 增量内容
+              }
+            - type='complete': 完成信息（最后一条）
+              {
+                  'type': 'complete',
+                  'answer': str,  # 完整答案
+                  'retrieved_docs': List[Dict],
+                  'thinking_process': List[Dict],
+                  'elapsed_time': float,
+                  'tokens_used': int
+              }
+        """
+        start_time = time.time()
+        
+        # 1. 向量检索
+        thinking_process = []
+        thinking_process.append({
+            'step': 1,
+            'action': '分析问题',
+            'description': f'识别问题类型并提取关键词',
+            'details': f'问题长度: {len(question)} 字符'
+        })
+        
+        docs_with_scores = self.vector_service.search_with_score(user_id, question, k=k)
+        
+        if not docs_with_scores:
+            # 没有检索到文档，直接返回
+            elapsed_time = time.time() - start_time
+            yield {
+                'type': 'thinking',
+                'thinking_process': thinking_process
+            }
+            yield {
+                'type': 'complete',
+                'answer': '抱歉，我在知识库中没有找到相关信息。请确保已上传相关文档。',
+                'retrieved_docs': [],
+                'thinking_process': thinking_process,
+                'elapsed_time': elapsed_time,
+                'tokens_used': 0
+            }
+            return
+        
+        # 2. 处理检索结果
+        retrieved_docs = []
+        context_parts = []
+        
+        for i, (doc, score) in enumerate(docs_with_scores):
+            # 转换评分为相似度（Chroma 使用距离，越小越相似）
+            similarity = max(0, 1 - score)  # 简单转换
+            
+            retrieved_docs.append({
+                'chunk_id': i,
+                'content': doc.page_content,
+                'similarity': round(similarity, 2),
+                'metadata': doc.metadata
+            })
+            
+            context_parts.append(f"[文档片段 {i+1}]\n{doc.page_content}")
+        
+        context = "\n\n".join(context_parts)
+        
+        avg_similarity = sum([d['similarity'] for d in retrieved_docs]) / len(retrieved_docs)
+        thinking_process.append({
+            'step': 2,
+            'action': '文档检索',
+            'description': f'检索到 {len(retrieved_docs)} 个相关段落',
+            'details': f'平均相似度: {avg_similarity:.2f}'
+        })
+        
+        # 3. 构造 Prompt 并调用 LLM（流式）
+        thinking_process.append({
+            'step': 3,
+            'action': '生成答案',
+            'description': '基于检索结果生成回答',
+            'details': f'上下文长度: {len(context)} 字符'
+        })
+        
+        # 先 yield 思考过程
+        yield {
+            'type': 'thinking',
+            'thinking_process': thinking_process
+        }
+        
+        # 使用 LangChain RAG Chain（流式）
+        rag_chain = (
+            {"context": lambda x: context, "question": RunnablePassthrough()}
+            | self.prompt
+            | self.llm
+            | StrOutputParser()
+        )
+        
+        # 流式生成答案
+        full_answer = ""
+        for chunk in rag_chain.stream(question):
+            full_answer += chunk
+            yield {
+                'type': 'chunk',
+                'content': chunk
+            }
+        
+        elapsed_time = time.time() - start_time
+        
+        thinking_process.append({
+            'step': 4,
+            'action': '完成',
+            'description': f'回答生成完成',
+            'details': f'耗时: {elapsed_time:.2f} 秒'
+        })
+        
+        # TODO: 计算实际 Token 消耗
+        estimated_tokens = len(context) // 4 + len(question) // 4 + len(full_answer) // 4
+        
+        # 最后 yield 完整结果
+        yield {
+            'type': 'complete',
+            'answer': full_answer,
             'retrieved_docs': retrieved_docs,
             'thinking_process': thinking_process,
             'elapsed_time': elapsed_time,
