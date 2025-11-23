@@ -103,6 +103,12 @@ class DocumentDAO:
         row = self.db.execute_one(query, (user_id, status))
         return row['total'] if row and row['total'] else 0
     
+    def get_total_chunk_count(self, user_id: int, status: str = 'active') -> int:
+        """获取用户总块数（从数据库获取，比查询向量库快）"""
+        query = "SELECT SUM(chunk_count) as total FROM documents WHERE user_id = ? AND status = ?"
+        row = self.db.execute_one(query, (user_id, status))
+        return row['total'] if row and row['total'] else 0
+    
     def search_documents(self, user_id: int, keyword: str, limit: int = 20) -> List[Document]:
         """搜索文档"""
         query = """

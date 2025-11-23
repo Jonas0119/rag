@@ -6,6 +6,13 @@ from services import get_session_service
 from .chat_interface import load_session_messages
 
 
+@st.cache_data(ttl=60)  # 缓存60秒，减少数据库查询
+def _get_cached_sessions(user_id: int, limit: int = 50):
+    """缓存会话列表查询"""
+    session_service = get_session_service()
+    return session_service.get_user_sessions(user_id, limit=limit)
+
+
 def show_session_list(user_id: int):
     """显示会话列表（侧边栏）"""
     
@@ -15,9 +22,11 @@ def show_session_list(user_id: int):
     
     # 新建对话按钮
     if st.sidebar.button("➕ 新建对话", use_container_width=True):
-        # 清空当前对话
-        st.session_state.current_session_id = None
-        st.session_state.chat_messages = []
+        # 只清空当前显示的对话，不停止后台对话
+        st.session_state.current_conversation_id = None
+        # 兼容旧代码，也清空 chat_messages（如果存在）
+        if 'chat_messages' in st.session_state:
+            st.session_state.chat_messages = []
         st.rerun()
     
     # 搜索框
@@ -27,8 +36,16 @@ def show_session_list(user_id: int):
         label_visibility="collapsed"
     )
     
-    # 获取会话列表（按时间分组）
-    sessions_grouped = session_service.get_user_sessions(user_id, limit=50)
+    # 获取会话列表（按时间分组）- 使用缓存优化
+    # 使用占位符先显示加载状态，然后加载数据
+    sessions_placeholder = st.sidebar.empty()
+    sessions_placeholder.info("📋 正在加载会话列表...")
+    
+    # 从缓存获取会话列表（如果缓存未命中，会查询数据库）
+    sessions_grouped = _get_cached_sessions(user_id, limit=50)
+    
+    # 清除占位符，准备显示实际内容
+    sessions_placeholder.empty()
     
     # 过滤搜索结果
     if search_query:
@@ -88,8 +105,17 @@ def _display_session_item(session: dict, session_service):
     message_count = session['message_count']
     is_pinned = session['is_pinned']
     
-    # 判断是否为当前会话
-    is_current = st.session_state.get('current_session_id') == session_id
+    # 判断是否为当前会话（兼容新旧系统）
+    is_current = False
+    # 检查新系统
+    current_conv_id = st.session_state.get('current_conversation_id')
+    if current_conv_id:
+        current_conv = st.session_state.get('active_conversations', {}).get(current_conv_id)
+        if current_conv and current_conv.get('session_id') == session_id:
+            is_current = True
+    # 检查旧系统（兼容）
+    if not is_current:
+        is_current = st.session_state.get('current_session_id') == session_id
     
     # 使用两列布局：会话标题 + 操作菜单
     col1, col2 = st.sidebar.columns([5, 1])
@@ -159,10 +185,21 @@ def _confirm_delete_session(session_id: str, title: str, session_service):
             if st.button("✅ 确认删除", use_container_width=True, type="primary"):
                 session_service.delete_session(session_id)
                 
-                # 如果删除的是当前会话，清空
+                # 如果删除的是当前会话，清空（兼容新旧系统）
+                # 检查新系统
+                current_conv_id = st.session_state.get('current_conversation_id')
+                if current_conv_id:
+                    current_conv = st.session_state.get('active_conversations', {}).get(current_conv_id)
+                    if current_conv and current_conv.get('session_id') == session_id:
+                        # 从 active_conversations 中移除
+                        if current_conv_id in st.session_state.get('active_conversations', {}):
+                            del st.session_state.active_conversations[current_conv_id]
+                        st.session_state.current_conversation_id = None
+                # 检查旧系统（兼容）
                 if st.session_state.get('current_session_id') == session_id:
                     st.session_state.current_session_id = None
-                    st.session_state.chat_messages = []
+                    if 'chat_messages' in st.session_state:
+                        st.session_state.chat_messages = []
                 
                 st.success("会话已删除")
                 st.rerun()

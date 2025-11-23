@@ -4,6 +4,8 @@
 import os
 from typing import List, Optional
 from pathlib import Path
+import threading
+import logging
 
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -11,26 +13,106 @@ from langchain_core.documents import Document
 
 from utils.config import config
 
+logger = logging.getLogger(__name__)
+
 
 class VectorStoreService:
     """向量库服务 - 每用户独立 Collection"""
     
     def __init__(self):
-        # 初始化 Embedding 模型（全局共享）
-        self.embeddings = self._load_embeddings()
+        # 异步加载 Embedding 模型（不阻塞初始化）
+        self.embeddings: Optional[HuggingFaceEmbeddings] = None
+        self._embeddings_loading = False
+        self._embeddings_loaded = False
+        self._embeddings_lock = threading.Lock()
         self._cache = {}  # 缓存向量库实例
-    
-    def _load_embeddings(self):
-        """加载 Embedding 模型"""
-        # 解决 HuggingFace tokenizers 的 fork 警告
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
         
-        embeddings = HuggingFaceEmbeddings(
-            model_name=config.EMBEDDING_MODEL,
-            model_kwargs={'device': config.EMBEDDING_DEVICE},
-            encode_kwargs={'normalize_embeddings': config.NORMALIZE_EMBEDDINGS}
+        # 在后台线程中启动模型加载
+        self._start_loading_embeddings()
+    
+    def _start_loading_embeddings(self):
+        """在后台线程中启动模型加载"""
+        if self._embeddings_loading or self._embeddings_loaded:
+            return
+        
+        self._embeddings_loading = True
+        thread = threading.Thread(
+            target=self._load_embeddings_async,
+            daemon=True,
+            name="EmbeddingModelLoader"
         )
-        return embeddings
+        thread.start()
+        logger.info(f"[向量库服务] 已在后台启动 Embedding 模型加载: {config.EMBEDDING_MODEL}")
+    
+    def _load_embeddings_async(self):
+        """异步加载 Embedding 模型（在后台线程中执行）"""
+        try:
+            logger.info(f"[向量库服务] 开始加载 Embedding 模型: {config.EMBEDDING_MODEL}")
+            # 解决 HuggingFace tokenizers 的 fork 警告
+            os.environ["TOKENIZERS_PARALLELISM"] = "false"
+            
+            embeddings = HuggingFaceEmbeddings(
+                model_name=config.EMBEDDING_MODEL,
+                model_kwargs={'device': config.EMBEDDING_DEVICE},
+                encode_kwargs={'normalize_embeddings': config.NORMALIZE_EMBEDDINGS}
+            )
+            
+            with self._embeddings_lock:
+                self.embeddings = embeddings
+                self._embeddings_loaded = True
+                self._embeddings_loading = False
+            
+            logger.info(f"[向量库服务] Embedding 模型加载完成: {config.EMBEDDING_MODEL}")
+        except Exception as e:
+            logger.error(f"[向量库服务] Embedding 模型加载失败: {str(e)}", exc_info=True)
+            with self._embeddings_lock:
+                self._embeddings_loading = False
+    
+    def _ensure_embeddings_loaded(self, timeout: float = 300.0):
+        """
+        确保 Embedding 模型已加载（如果正在加载则等待）
+        
+        Args:
+            timeout: 最大等待时间（秒），默认 5 分钟
+        
+        Returns:
+            bool: 模型是否已加载
+        """
+        if self._embeddings_loaded and self.embeddings is not None:
+            return True
+        
+        # 如果还没开始加载，启动加载
+        if not self._embeddings_loading:
+            self._start_loading_embeddings()
+        
+        # 等待模型加载完成
+        import time
+        start_time = time.time()
+        while not self._embeddings_loaded:
+            if time.time() - start_time > timeout:
+                logger.error(f"[向量库服务] 等待 Embedding 模型加载超时（{timeout}秒）")
+                return False
+            time.sleep(0.1)  # 等待 100ms 后重试
+        
+        return self.embeddings is not None
+    
+    def is_embeddings_ready(self) -> bool:
+        """检查 Embedding 模型是否已加载完成"""
+        return self._embeddings_loaded and self.embeddings is not None
+    
+    def get_embeddings_loading_status(self) -> dict:
+        """
+        获取 Embedding 模型加载状态
+        
+        Returns:
+            dict: 包含加载状态的字典
+        """
+        return {
+            'loaded': self._embeddings_loaded,
+            'loading': self._embeddings_loading,
+            'ready': self.is_embeddings_ready(),
+            'model_name': config.EMBEDDING_MODEL
+        }
     
     def get_collection_name(self, user_id: int) -> str:
         """获取用户的 Collection 名称"""
@@ -49,7 +131,14 @@ class VectorStoreService:
         
         Returns:
             Chroma 向量库实例
+        
+        Raises:
+            RuntimeError: 如果 Embedding 模型未加载完成
         """
+        # 确保 Embedding 模型已加载
+        if not self._ensure_embeddings_loaded():
+            raise RuntimeError(f"Embedding 模型加载失败或超时: {config.EMBEDDING_MODEL}")
+        
         # 从缓存获取
         if user_id in self._cache:
             return self._cache[user_id]

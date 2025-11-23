@@ -2,13 +2,16 @@
 文档管理组件
 """
 import streamlit as st
-from services import get_document_service
+from services import get_document_service, get_vector_store_service
 
 
 def show_document_manager(user_id: int):
     """显示文档管理界面"""
     
     st.title("📁 知识库管理")
+    
+    # 显示 Embedding 模型加载状态
+    _show_embedding_model_status()
     
     doc_service = get_document_service()
     
@@ -24,6 +27,20 @@ def show_document_manager(user_id: int):
     
     # 文档列表
     _show_document_list(user_id, doc_service)
+
+
+def _show_embedding_model_status():
+    """显示 Embedding 模型加载状态"""
+    vector_service = get_vector_store_service()
+    status = vector_service.get_embeddings_loading_status()
+    
+    if status['ready']:
+        st.success(f"✅ Embedding 模型已就绪: {status['model_name']}")
+    elif status['loading']:
+        st.info(f"⏳ 正在后台加载 Embedding 模型: {status['model_name']}，请稍候...")
+        st.caption("💡 模型加载完成后即可使用向量检索功能")
+    else:
+        st.warning(f"⚠️ Embedding 模型未加载: {status['model_name']}")
 
 
 def _show_statistics(user_id: int, doc_service):

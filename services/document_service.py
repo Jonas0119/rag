@@ -257,7 +257,8 @@ class DocumentService:
         """获取用户文档统计"""
         doc_count = self.doc_dao.get_document_count(user_id)
         storage_used = self.doc_dao.get_total_storage(user_id)
-        vector_count = self.vector_service.get_document_count(user_id)
+        # 优化：从数据库获取块数，比查询向量库快很多
+        vector_count = self.doc_dao.get_total_chunk_count(user_id)
         
         return {
             'document_count': doc_count,

@@ -3,9 +3,23 @@ RAG 智能问答系统 - 主应用
 """
 import streamlit as st
 import os
+import logging
+import sys
 
 # 设置环境变量
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# 配置日志格式，包含文件名和行号
+# 格式：时间戳 | 级别 | 文件名:行号 | 函数名 | 消息
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s | %(levelname)-8s | %(filename)s:%(lineno)d | %(funcName)s() | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    stream=sys.stdout,
+    force=True  # 强制重新配置，避免重复配置
+)
+
+logger = logging.getLogger(__name__)
 
 from auth import AuthManager
 from components import (
@@ -369,6 +383,32 @@ THEME_CSS = {
         color: var(--text-secondary) !important;
     }
     
+    /* 处理浏览器自动填充的背景与文字颜色 */
+    input:-webkit-autofill,
+    input:-webkit-autofill:focus,
+    input:-webkit-autofill:hover,
+    textarea:-webkit-autofill,
+    textarea:-webkit-autofill:focus,
+    textarea:-webkit-autofill:hover {
+        -webkit-box-shadow: 0 0 0 1000px var(--bg-card) inset !important;
+        -webkit-text-fill-color: var(--text-primary) !important;
+        caret-color: var(--text-primary) !important;
+        transition: background-color 5000s ease-in-out 0s;
+    }
+
+    /* 处理浏览器自动填充的背景与文字颜色 */
+    input:-webkit-autofill,
+    input:-webkit-autofill:focus,
+    input:-webkit-autofill:hover,
+    textarea:-webkit-autofill,
+    textarea:-webkit-autofill:focus,
+    textarea:-webkit-autofill:hover {
+        -webkit-box-shadow: 0 0 0 1000px var(--bg-card) inset !important;
+        -webkit-text-fill-color: var(--text-primary) !important;
+        caret-color: var(--text-primary) !important;
+        transition: background-color 5000s ease-in-out 0s;
+    }
+    
     /* ===== 聊天输入框 - 简洁统一设计 ===== */
     /* 容器背景统一 */
     .stChatInput,
@@ -404,6 +444,9 @@ THEME_CSS = {
         color: var(--text-primary) !important;
         font-size: 15px !important;
         line-height: 1.6 !important;
+        
+        /* 光标颜色 - 确保可见 */
+        caret-color: var(--text-primary) !important;
         
         /* 边框：柔和的边框 */
         border: 1px solid var(--border) !important;
@@ -451,6 +494,8 @@ THEME_CSS = {
         background-color: var(--bg-card) !important;
         outline: none !important;
         box-shadow: none !important;
+        /* 确保焦点时光标可见 */
+        caret-color: var(--text-primary) !important;
     }
     
     /* 其他状态 */
@@ -1054,6 +1099,9 @@ THEME_CSS = {
         font-size: 15px !important;
         line-height: 1.6 !important;
         
+        /* 光标颜色 - 确保可见 */
+        caret-color: var(--text-primary) !important;
+        
         /* 边框：柔和的边框 */
         border: 1px solid var(--border) !important;
         border-radius: 12px !important;
@@ -1100,6 +1148,8 @@ THEME_CSS = {
         background-color: var(--bg-card) !important;
         outline: none !important;
         box-shadow: none !important;
+        /* 确保焦点时光标可见 */
+        caret-color: var(--text-primary) !important;
     }
     
     /* 其他状态 */
@@ -1342,30 +1392,45 @@ if "theme_mode" not in st.session_state:
 
 apply_theme()
 
-# 初始化认证管理器
-if 'auth_manager' not in st.session_state:
-    st.session_state.auth_manager = AuthManager()
+# 初始化认证管理器（每次脚本运行都重新创建，确保请求级缓存被重置）
+auth_manager = AuthManager()
 
-auth_manager = st.session_state.auth_manager
+# 在应用启动时预加载 Embedding 模型（异步，不阻塞）
+# 使用 st.cache_resource 确保只触发一次（即使页面刷新）
+@st.cache_resource
+def init_embedding_model():
+    try:
+        from services import get_vector_store_service
+        # 获取服务实例会触发后台模型加载
+        _ = get_vector_store_service()
+        logger.debug("[脚本初始化] 已触发 Embedding 模型后台加载 (Cached)")
+    except Exception as e:
+        logger.warning(f"[脚本初始化] 触发 Embedding 模型加载失败: {str(e)}")
+
+init_embedding_model()
 
 
 def main():
     """主函数"""
     
-    # 检查登录状态
-    if not auth_manager.is_authenticated():
-        # 显示登录页面
+    # 获取当前用户（内存优先，Cookie兜底）
+    user = auth_manager.get_current_user()
+    
+    if not user:
+        # 未登录，显示登录页面
+        logger.info("[主应用] 用户未认证，显示登录页面")
         show_login_page(auth_manager)
         return
     
-    # 已登录 - 显示主应用
-    show_main_app()
+    # 已登录，显示主应用
+    logger.info(f"[主应用] 用户已认证: user_id={user.user_id}, username={user.username}")
+    show_main_app(user)
 
 
-def show_main_app():
+def show_main_app(user):
     """显示主应用界面"""
     
-    user_id = auth_manager.get_current_user_id()
+    user_id = user.user_id
     
     # 初始化页面状态
     if 'current_page' not in st.session_state:
@@ -1438,6 +1503,22 @@ def show_knowledge_base_page(user_id: int):
 def show_settings_page(user_id: int):
     """系统设置页面"""
     st.title("⚙️ 系统设置")
+    
+    # 显示 Embedding 模型加载状态
+    from services import get_vector_store_service
+    vector_service = get_vector_store_service()
+    status = vector_service.get_embeddings_loading_status()
+    
+    st.subheader("🤖 模型状态")
+    if status['ready']:
+        st.success(f"✅ Embedding 模型已就绪: {status['model_name']}")
+    elif status['loading']:
+        st.info(f"⏳ 正在后台加载 Embedding 模型: {status['model_name']}，请稍候...")
+        st.caption("💡 模型加载完成后即可使用向量检索功能")
+    else:
+        st.warning(f"⚠️ Embedding 模型未加载: {status['model_name']}")
+    
+    st.markdown("---")
     
     # 用户信息
     st.subheader("👤 用户信息")

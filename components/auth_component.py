@@ -2,6 +2,7 @@
 登录注册组件
 """
 import streamlit as st
+import time
 from auth import AuthManager
 
 
@@ -32,7 +33,6 @@ def _show_login_form(auth_manager: AuthManager):
     with st.form("login_form"):
         username = st.text_input("用户名", key="login_username")
         password = st.text_input("密码", type="password", key="login_password")
-        remember_me = st.checkbox("记住我（30天）", value=True)
         
         submitted = st.form_submit_button("登录", use_container_width=True)
         
@@ -41,23 +41,18 @@ def _show_login_form(auth_manager: AuthManager):
                 st.error("请输入用户名和密码")
                 return
             
-            # 尝试登录
-            success, user_id, error_msg = auth_manager.login(username, password)
+            # 尝试登录（内存已写入）
+            success, js_script, error_msg = auth_manager.login(username, password)
             
             if success:
-                # 获取用户信息
-                from database import UserDAO
-                user_dao = UserDAO()
-                user = user_dao.get_user_by_id(user_id)
+                # 1. 注入 JS 设置 Cookie（异步，在后台执行）
+                if js_script:
+                    st.components.v1.html(js_script, height=0)
                 
-                # 设置会话
-                auth_manager.set_session(
-                    user_id=user_id,
-                    username=user.username,
-                    display_name=user.display_name or user.username
-                )
+                st.success("登录成功！正在跳转...")
                 
-                st.success("登录成功！")
+                # 2. 立即刷新（不需要等待，因为内存已有用户信息）
+                time.sleep(0.3)  # 短暂延迟，让成功消息显示
                 st.rerun()
             else:
                 st.error(f"❌ {error_msg}")
@@ -112,8 +107,8 @@ def _show_register_form(auth_manager: AuthManager):
                 st.error("请先同意使用条款")
                 return
             
-            # 尝试注册
-            success, user_id, error_msg = auth_manager.register(
+            # 尝试注册（内存已写入）
+            success, js_script, error_msg = auth_manager.register(
                 username=username,
                 password=password,
                 email=email if email else None,
@@ -121,15 +116,14 @@ def _show_register_form(auth_manager: AuthManager):
             )
             
             if success:
+                # 1. 注入 JS 设置 Cookie（异步，在后台执行）
+                if js_script:
+                    st.components.v1.html(js_script, height=0)
+                
                 st.success("✅ 注册成功！自动登录中...")
                 
-                # 自动登录
-                auth_manager.set_session(
-                    user_id=user_id,
-                    username=username,
-                    display_name=display_name or username
-                )
-                
+                # 2. 立即刷新（不需要等待，因为内存已有用户信息）
+                time.sleep(0.3)
                 st.rerun()
             else:
                 st.error(f"❌ {error_msg}")
@@ -137,8 +131,12 @@ def _show_register_form(auth_manager: AuthManager):
 
 def show_logout_button(auth_manager: AuthManager):
     """显示用户信息和登出按钮（在侧边栏）"""
-    username = auth_manager.get_current_username()
-    display_name = st.session_state.get('display_name', username)
+    user = auth_manager.get_current_user()
+    if not user:
+        return
+
+    username = user.username
+    display_name = user.display_name or username
     
     # 用户信息卡片样式 - 紧凑版
     st.sidebar.markdown(f"""
@@ -199,6 +197,11 @@ def show_logout_button(auth_manager: AuthManager):
     
     # 登出按钮
     if st.sidebar.button("🚪 登出", use_container_width=True, type="secondary"):
-        auth_manager.logout()
-        st.rerun()
-
+        # 1. 调用登出逻辑（清除内存，获取清除 Cookie 的 JS）
+        js_script = auth_manager.logout()
+        
+        st.sidebar.success("正在安全登出...")
+        
+        # 2. 执行 JS：清除 Cookie + 刷新页面（由 JS 完成刷新，确保 Cookie 先删除）
+        # 注意：这里不要调用 st.rerun()，让 JS 控制刷新时机
+        st.components.v1.html(js_script, height=100)
