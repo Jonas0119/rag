@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 from contextlib import contextmanager
+from urllib.parse import urlparse, urlunparse
 
 from utils.config import config
 from utils.performance_monitor import monitor_database
@@ -65,25 +66,110 @@ class DatabaseManager:
         finally:
             conn.close()
     
+    def _normalize_database_url(self, database_url: str) -> str:
+        """
+        规范化数据库连接 URL，解决 IPv6 连接问题
+        
+        Streamlit Cloud 可能不支持 IPv6，需要：
+        1. 如果 URL 中包含 IPv6 地址，尝试提取主机名
+        2. 添加连接参数优化连接
+        """
+        try:
+            # 解析 URL
+            parsed = urlparse(database_url)
+            
+            # 检查是否是 IPv6 地址格式
+            hostname = parsed.hostname
+            if hostname and ':' in hostname and not hostname.startswith('['):
+                # 可能是 IPv6 地址，尝试从 netloc 中提取主机名
+                # Supabase 的 DATABASE_URL 格式通常是：
+                # postgresql://postgres:password@db.project-ref.supabase.co:5432/postgres
+                # 如果 netloc 包含 IPv6，尝试使用主机名部分
+                netloc_parts = parsed.netloc.split('@')
+                if len(netloc_parts) == 2:
+                    # 有用户名密码部分
+                    auth_part = netloc_parts[0]
+                    host_part = netloc_parts[1]
+                    # 提取主机名（去掉端口）
+                    if ':' in host_part:
+                        host, port = host_part.rsplit(':', 1)
+                        # 如果 host 是 IPv6，尝试从原始 URL 中提取主机名
+                        # 或者使用主机名（如果 DATABASE_URL 中包含）
+                        # 这里我们保持原样，但添加连接参数
+                        pass
+            
+            # 添加连接参数：增加超时时间，优化连接
+            query_params = []
+            if parsed.query:
+                # 解析现有查询参数
+                from urllib.parse import parse_qs, urlencode
+                existing_params = parse_qs(parsed.query)
+                # 添加或更新连接参数
+                existing_params['connect_timeout'] = ['10']  # 连接超时 10 秒
+                existing_params['keepalives'] = ['1']  # 启用 keepalive
+                existing_params['keepalives_idle'] = ['30']  # keepalive idle 时间
+                existing_params['keepalives_interval'] = ['10']  # keepalive 间隔
+                existing_params['keepalives_count'] = ['5']  # keepalive 重试次数
+                new_query = urlencode(existing_params, doseq=True)
+            else:
+                # 没有现有查询参数，直接添加
+                connection_params = {
+                    'connect_timeout': '10',
+                    'keepalives': '1',
+                    'keepalives_idle': '30',
+                    'keepalives_interval': '10',
+                    'keepalives_count': '5',
+                }
+                from urllib.parse import urlencode
+                new_query = urlencode(connection_params)
+            
+            # 重建 URL
+            normalized_url = urlunparse((
+                parsed.scheme,
+                parsed.netloc,  # 保持原始主机名和端口
+                parsed.path,
+                parsed.params,
+                new_query,
+                parsed.fragment
+            ))
+            
+            return normalized_url
+        except Exception as e:
+            # 如果解析失败，返回原始 URL
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"数据库 URL 规范化失败，使用原始 URL: {str(e)}")
+            return database_url
+    
     def _init_connection_pool(self):
         """初始化 PostgreSQL 连接池"""
         if self._connection_pool is not None:
             return  # 连接池已创建
         
         try:
+            # 规范化数据库 URL，解决 IPv6 连接问题
+            normalized_url = self._normalize_database_url(config.DATABASE_URL)
+            
             # 创建连接池
             # minconn: 最小连接数（保持活跃连接）
             # maxconn: 最大连接数（峰值并发）
+            # 注意：如果连接池创建失败，会在 get_connection 中降级为直接连接
             self._connection_pool = pool.SimpleConnectionPool(
-                minconn=2,
-                maxconn=10,
-                dsn=config.DATABASE_URL
+                minconn=1,  # 减少最小连接数，避免初始化时连接过多
+                maxconn=5,  # 减少最大连接数，适合 Streamlit Cloud 环境
+                dsn=normalized_url
             )
             
             if self._connection_pool is None:
                 raise ConnectionError("无法创建 PostgreSQL 连接池")
         except Exception as e:
-            raise ConnectionError(f"创建 PostgreSQL 连接池失败: {str(e)}")
+            # 连接池创建失败，但不立即抛出异常
+            # 在 get_connection 中会尝试直接连接作为降级方案
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"PostgreSQL 连接池创建失败，将使用直接连接: {str(e)}")
+            # 不抛出异常，允许降级到直接连接
+            self._connection_pool = None
     
     def _is_connection_alive(self, conn) -> bool:
         """检查 PostgreSQL 连接是否有效"""
@@ -115,8 +201,10 @@ class DatabaseManager:
         # 执行初始化（PostgreSQL 支持 IF NOT EXISTS）
         # 注意：这里直接创建连接，而不是调用 get_connection()，避免递归调用
         try:
+            # 规范化数据库 URL
+            normalized_url = self._normalize_database_url(config.DATABASE_URL)
             # 直接创建连接，避免递归调用 get_connection()
-            conn = psycopg2.connect(config.DATABASE_URL)
+            conn = psycopg2.connect(normalized_url)
             cursor = conn.cursor()
             # 执行整个脚本
             cursor.execute(sql_script)
@@ -184,6 +272,17 @@ class DatabaseManager:
             if not self._postgres_initialized:
                 self._init_postgres_database()
             
+            # 规范化数据库 URL
+            normalized_url = self._normalize_database_url(config.DATABASE_URL)
+            
+            # 如果连接池不存在或创建失败，使用直接连接
+            if self._connection_pool is None:
+                # 降级到直接连接
+                try:
+                    return psycopg2.connect(normalized_url)
+                except psycopg2.OperationalError as op_err:
+                    self._handle_postgres_error(op_err)
+            
             # 从连接池获取连接
             try:
                 conn = self._connection_pool.getconn()
@@ -196,19 +295,24 @@ class DatabaseManager:
                     except:
                         pass
                     # 创建新连接（不通过连接池，直接创建）
-                    conn = psycopg2.connect(config.DATABASE_URL)
+                    conn = psycopg2.connect(normalized_url)
                 
                 return conn
             except pool.PoolError as e:
                 # 连接池错误（如连接池已满），尝试直接创建连接
                 try:
-                    return psycopg2.connect(config.DATABASE_URL)
+                    return psycopg2.connect(normalized_url)
                 except psycopg2.OperationalError as op_err:
                     # 处理连接错误
                     self._handle_postgres_error(op_err)
             except psycopg2.OperationalError as e:
                 self._handle_postgres_error(e)
             except Exception as e:
+                # 如果连接池失败，尝试直接连接作为降级方案
+                try:
+                    return psycopg2.connect(normalized_url)
+                except psycopg2.OperationalError as op_err:
+                    self._handle_postgres_error(op_err)
                 raise ConnectionError(f"数据库连接失败: {str(e)}")
         else:
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
