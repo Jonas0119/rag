@@ -62,20 +62,37 @@ class SessionDAO:
         Returns:
             分组后的字典: {'today': [], 'yesterday': [], 'this_week': [], ...}
         """
-        query = """
-            SELECT *,
-                CASE 
-                    WHEN DATE(updated_at) = DATE('now') THEN 'today'
-                    WHEN DATE(updated_at) = DATE('now', '-1 day') THEN 'yesterday'
-                    WHEN DATE(updated_at) >= DATE('now', '-7 day') THEN 'this_week'
-                    WHEN DATE(updated_at) >= DATE('now', '-30 day') THEN 'this_month'
-                    ELSE 'older'
-                END as time_group
-            FROM sessions
-            WHERE user_id = ? AND status = 'active'
-            ORDER BY is_pinned DESC, updated_at DESC
-            LIMIT 50
-        """
+        # 根据数据库类型选择不同的日期函数
+        if self.db.db_type == "postgresql":
+            query = """
+                SELECT *,
+                    CASE 
+                        WHEN DATE(updated_at) = CURRENT_DATE THEN 'today'
+                        WHEN DATE(updated_at) = CURRENT_DATE - INTERVAL '1 day' THEN 'yesterday'
+                        WHEN updated_at >= CURRENT_DATE - INTERVAL '7 days' THEN 'this_week'
+                        WHEN updated_at >= CURRENT_DATE - INTERVAL '30 days' THEN 'this_month'
+                        ELSE 'older'
+                    END as time_group
+                FROM sessions
+                WHERE user_id = ? AND status = 'active'
+                ORDER BY is_pinned DESC, updated_at DESC
+                LIMIT 50
+            """
+        else:
+            query = """
+                SELECT *,
+                    CASE 
+                        WHEN DATE(updated_at) = DATE('now') THEN 'today'
+                        WHEN DATE(updated_at) = DATE('now', '-1 day') THEN 'yesterday'
+                        WHEN DATE(updated_at) >= DATE('now', '-7 day') THEN 'this_week'
+                        WHEN DATE(updated_at) >= DATE('now', '-30 day') THEN 'this_month'
+                        ELSE 'older'
+                    END as time_group
+                FROM sessions
+                WHERE user_id = ? AND status = 'active'
+                ORDER BY is_pinned DESC, updated_at DESC
+                LIMIT 50
+            """
         rows = self.db.execute_query(query, (user_id,))
         
         # 按时间分组

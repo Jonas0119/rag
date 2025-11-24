@@ -528,9 +528,20 @@ def load_session_messages(session_id: str, session_service):
     
     # 获取会话信息（包括 user_id）
     from database import SessionDAO
+    from utils.db_error_handler import safe_db_operation, show_db_error_ui
+    
     session_dao = SessionDAO()
-    session = session_dao.get_session(session_id)
-    user_id = session.user_id if session else None
+    try:
+        session = safe_db_operation(
+            lambda: session_dao.get_session(session_id),
+            default_value=None,
+            error_context="获取会话信息"
+        )
+        user_id = session.user_id if session else None
+    except Exception as e:
+        show_db_error_ui(e, "获取会话信息")
+        user_id = None
+        session = None
     
     # 转换为chat格式
     chat_messages = []

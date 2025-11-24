@@ -6,6 +6,18 @@
 
 ## 🔄 最近更新
 
+### 2025-01-XX
+
+#### 📚 文档更新
+- **整合云服务对接文档**：将所有云服务对接方案、环境变量检查清单整合到 README.md
+- **添加分步骤切换方案**：支持通过 `STORAGE_MODE`、`VECTOR_DB_MODE`、`DATABASE_MODE` 三个开关独立切换
+- **完善环境变量检查**：提供详细的变量清单和检查脚本
+
+#### ☁️ 云服务支持（规划中）
+- **Supabase Storage**：文件存储云服务对接方案
+- **Supabase PostgreSQL**：数据库云服务对接方案
+- **Pinecone**：向量库云服务对接方案（单 Index + metadata 过滤）
+
 ### 2025-11-15
 
 #### 🐛 Bug 修复
@@ -33,6 +45,15 @@
 - [数据持久化方案](#-数据持久化方案)
 - [功能模块详细设计](#-功能模块详细设计)
 - [配置说明](#️-配置说明)
+- [云服务对接方案](#-云服务对接方案)
+  - [整体架构](#整体架构)
+  - [Supabase Storage 对接](#supabase-storage-对接)
+  - [Supabase PostgreSQL 对接](#supabase-postgresql-对接)
+  - [Pinecone 对接](#pinecone-对接)
+  - [环境变量配置](#环境变量配置-云服务)
+  - [准备工作清单](#准备工作清单)
+  - [分步骤切换方案](#分步骤切换方案)
+- [环境变量检查](#-环境变量检查)
 - [依赖包清单](#-依赖包清单)
 - [开发计划](#-开发计划)
 - [使用说明](#-使用说明)
@@ -1117,6 +1138,562 @@ else:
 
 ---
 
+## ☁️ 云服务对接方案
+
+### 整体架构
+
+#### 当前架构（本地部署）
+```
+本地部署
+├── 本地文件系统 (data/users/user_{user_id}/uploads/)
+├── SQLite 数据库 (data/database/rag_system.db)
+└── Chroma 向量库 (data/chroma/user_{user_id}_collection/)
+```
+
+#### 改造后架构（云服务）
+```
+云服务架构
+├── Supabase Storage (文件存储)
+│   └── Bucket: documents
+│       └── user_{user_id}/{filename}
+├── Supabase PostgreSQL (数据库)
+│   └── 表结构：users, sessions, messages, documents, user_stats
+└── Pinecone (向量库)
+    └── Index: rag-system (单 Index，通过 metadata 过滤)
+```
+
+### Supabase Storage 对接
+
+#### 参考文档
+- [Supabase Storage Quickstart](https://supabase.com/docs/guides/storage/quickstart)
+- [Supabase Python Client](https://supabase.com/docs/reference/python/introduction)
+
+#### 核心概念
+
+**1. Bucket（存储桶）**
+- **名称**：`rag`（在 `.env` 中通过 `SUPABASE_STORAGE_BUCKET` 配置）
+- **类型**：Private（私有，需要认证）
+- **用途**：存储用户上传的文档文件
+
+**2. 文件路径结构**
+```
+rag/
+├── user_1/
+│   ├── 1763135036_dd4d9424.pdf
+│   └── 1763202390_aae4f415.pdf
+├── user_2/
+│   └── ...
+└── ...
+```
+
+路径格式：`user_{user_id}/{filename}`
+
+#### 实现方案
+
+**1. 安装依赖**
+```bash
+pip install supabase
+# 或使用 Poetry
+poetry add supabase
+```
+
+**2. 初始化客户端**
+```python
+from supabase import create_client, Client
+
+# 使用 Service Key（有完整权限，用于服务端）
+supabase: Client = create_client(
+    supabase_url=config.SUPABASE_URL,
+    supabase_key=config.SUPABASE_SERVICE_KEY  # 使用 Service Key
+)
+```
+
+**3. 文件操作**
+
+- **上传文件**：`storage.from_(bucket).upload(path, file_data)`
+- **下载文件**：`storage.from_(bucket).download(file_path)`
+- **删除文件**：`storage.from_(bucket).remove([file_path])`
+- **获取文件 URL**：`storage.from_(bucket).create_signed_url(path, expires_in)`
+
+**4. 安全策略**
+
+在 Supabase Dashboard 中配置 Storage Policies（可选，服务端使用 Service Key 可绕过限制）：
+
+```sql
+-- 允许用户上传自己的文件
+CREATE POLICY "Users can upload their own files"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (
+    bucket_id = 'rag' AND
+    (storage.foldername(name))[1] = 'user_' || auth.uid()::text
+);
+```
+
+**注意**：由于我们使用 Service Key（服务端），这些 Policies 主要用于前端直接访问的情况。服务端使用 Service Key 可以绕过这些限制。
+
+### Supabase PostgreSQL 对接
+
+#### 参考文档
+- [Supabase Database Overview](https://supabase.com/docs/guides/database/overview)
+- [Connecting to your database](https://supabase.com/docs/guides/database/connecting-to-your-database)
+
+#### 核心概念
+
+**1. 连接字符串格式**
+```
+postgresql://postgres:[PASSWORD]@db.[PROJECT_REF].supabase.co:5432/postgres
+```
+
+**2. 数据库特性**
+- 完全兼容 PostgreSQL
+- 支持所有 PostgreSQL 功能
+- 免费版：500MB 数据库大小
+- 支持 Row Level Security (RLS)
+
+#### 实现方案
+
+**1. 安装依赖**
+```bash
+pip install psycopg2-binary
+# 或使用 Poetry
+poetry add psycopg2-binary
+```
+
+**2. 连接数据库**
+```python
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+def get_postgres_connection():
+    """获取 PostgreSQL 连接"""
+    conn = psycopg2.connect(
+        config.DATABASE_URL,
+        cursor_factory=RealDictCursor  # 返回字典格式的行
+    )
+    return conn
+```
+
+**3. SQL 语法差异**
+
+| SQLite | PostgreSQL | 说明 |
+|--------|-----------|------|
+| `INTEGER PRIMARY KEY AUTOINCREMENT` | `SERIAL PRIMARY KEY` | 自增主键 |
+| `BOOLEAN DEFAULT TRUE` | `BOOLEAN DEFAULT TRUE` | 相同 |
+| `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | 相同 |
+| `VARCHAR(n)` | `VARCHAR(n)` | 相同 |
+| `TEXT` | `TEXT` | 相同 |
+| `IF NOT EXISTS` | `IF NOT EXISTS` | 相同（PostgreSQL 9.5+） |
+| `?` (参数占位符) | `%s` (参数占位符) | 需要转换 |
+
+**4. 数据库管理器改造**
+
+代码已实现支持 SQLite 和 PostgreSQL 的 `DatabaseManager` 类：
+- 根据 `DATABASE_MODE` 自动选择数据库类型
+- 自动转换参数占位符（`?` → `%s`）
+- 延迟初始化，避免启动时连接失败
+- 统一的错误处理机制
+
+**5. 初始化数据库**
+
+使用 `database/init_db_postgres.sql` 在 Supabase Dashboard 的 SQL Editor 中执行。
+
+### Pinecone 对接
+
+#### 参考文档
+- [Pinecone Python SDK](https://docs.pinecone.io/reference/python-sdk)
+- [Pinecone LangChain Integration](https://python.langchain.com/docs/integrations/vectorstores/pinecone)
+
+#### 核心概念
+
+**1. Index（索引）**
+- **名称**：`rag-system`（全局唯一，所有用户共享）
+- **维度**：1024（匹配 BGE-large-zh-v1.5）
+- **指标**：cosine（余弦相似度）
+- **类型**：Serverless（免费版）
+- **限制**：免费版只有 1 个 Index，100K 向量
+
+**2. Metadata 过滤（多用户隔离）**
+- 所有向量必须包含 `user_id` 在 metadata 中
+- 所有查询必须使用 `filter={"user_id": user_id}`
+- 所有删除必须使用 `filter={"user_id": user_id, "doc_id": doc_id}`
+
+#### 实现方案
+
+**1. 安装依赖**
+```bash
+pip install pinecone-client langchain-pinecone
+# 或使用 Poetry
+poetry add pinecone-client langchain-pinecone
+```
+
+**2. 初始化 Pinecone**
+```python
+from pinecone import Pinecone, ServerlessSpec
+from langchain_pinecone import PineconeVectorStore
+
+# 初始化 Pinecone 客户端
+pc = Pinecone(api_key=config.PINECONE_API_KEY)
+
+# 获取或创建 Index
+index_name = config.PINECONE_INDEX_NAME
+
+# 检查 Index 是否存在，不存在则创建
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=1024,  # BGE-large-zh-v1.5 的维度
+        metric="cosine",
+        spec=ServerlessSpec(
+            cloud="aws",  # 或 "gcp"
+            region=config.PINECONE_ENVIRONMENT  # 如 "us-east-1"
+        )
+    )
+```
+
+**3. 向量库服务改造**
+
+代码已实现支持 Chroma 和 Pinecone 的 `VectorStoreService` 类：
+- 根据 `VECTOR_DB_MODE` 自动选择向量库类型
+- Pinecone 模式下自动添加 `user_id` 到 metadata
+- 所有查询/删除操作自动使用 metadata 过滤
+- 支持向量数量统计（通过 query 方法）
+
+#### 安全性注意事项
+
+⚠️ **重要**：Pinecone 单 Index 方案的安全性完全依赖于 metadata 过滤：
+
+1. **所有添加操作**必须包含 `user_id`：
+   ```python
+   doc.metadata["user_id"] = user_id  # 必须！
+   ```
+
+2. **所有查询操作**必须使用 filter：
+   ```python
+   filter={"user_id": user_id}  # 必须！
+   ```
+
+3. **所有删除操作**必须使用 filter：
+   ```python
+   filter={"user_id": user_id, "doc_id": doc_id}  # 必须！
+   ```
+
+4. **测试验证**：添加单元测试确保所有操作都正确使用 filter。
+
+### 环境变量配置（云服务）
+
+#### 模式切换开关
+
+```bash
+# ==================== 存储模式切换 ====================
+# local: 使用本地文件系统/SQLite/Chroma
+# cloud: 使用云服务（Supabase/Pinecone）
+STORAGE_MODE=local
+VECTOR_DB_MODE=local
+DATABASE_MODE=local
+```
+
+#### Supabase 配置
+
+```bash
+# ==================== Supabase 配置 ====================
+# 获取方式：Supabase Dashboard -> Settings -> API
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_KEY=your_publishable_key
+SUPABASE_SERVICE_KEY=your_service_key
+
+# Supabase Storage
+SUPABASE_STORAGE_BUCKET=documents
+
+# Supabase PostgreSQL
+# 获取方式：Supabase Dashboard -> Settings -> Database -> Connection string
+DATABASE_URL=postgresql://postgres:password@db.xxx.supabase.co:5432/postgres
+```
+
+#### Pinecone 配置
+
+```bash
+# ==================== Pinecone 配置 ====================
+# 获取方式：Pinecone Dashboard -> API Keys
+PINECONE_API_KEY=your_pinecone_api_key
+
+# Pinecone Environment/Region
+# 免费版通常是：us-east-1 (AWS) 或 us-east1-gcp (GCP)
+PINECONE_ENVIRONMENT=us-east-1
+
+# Pinecone Index 名称（单 Index，所有用户共享）
+PINECONE_INDEX_NAME=rag-system
+```
+
+### 准备工作清单
+
+#### 阶段1：Supabase 设置（30分钟）
+
+1. **创建 Storage Bucket**
+   - 登录 [Supabase Dashboard](https://supabase.com/dashboard)
+   - 进入 **Storage** 页面
+   - 点击 **New Bucket**
+   - 配置：Name: `documents`，Public: `No`（私有）
+
+2. **获取 Supabase 凭证**
+   - 进入 **Settings** -> **API**
+   - 复制 Project URL、anon public key、service_role key
+
+3. **获取 PostgreSQL 连接字符串**
+   - 进入 **Settings** -> **Database**
+   - 找到 **Connection string** -> **URI**
+   - 替换 `[PASSWORD]` 为数据库密码
+
+4. **初始化数据库表**
+   - 进入 **SQL Editor**
+   - 复制 `database/init_db_postgres.sql` 的内容
+   - 粘贴并执行
+
+#### 阶段2：Pinecone 设置（15分钟）
+
+1. **创建 Index**
+   - 登录 [Pinecone Dashboard](https://app.pinecone.io/)
+   - 点击 **Create Index**
+   - 配置：Name: `rag-system`，Dimensions: `1024`，Metric: `cosine`
+
+2. **获取 API Key**
+   - 进入 **API Keys** 页面
+   - 复制 API Key 和 Environment
+
+#### 阶段3：本地环境配置（10分钟）
+
+1. **安装依赖**
+   ```bash
+   pip install supabase psycopg2-binary pinecone-client langchain-pinecone
+   ```
+
+2. **配置环境变量**
+   - 复制 `config_template.txt` 为 `.env`
+   - 填入所有云服务的配置
+
+3. **测试连接**
+   ```bash
+   python -c "from supabase import create_client; print('Supabase OK')"
+   python -c "import psycopg2; print('PostgreSQL OK')"
+   python -c "from pinecone import Pinecone; print('Pinecone OK')"
+   ```
+
+### 分步骤切换方案
+
+通过三个独立的开关，可以分步骤切换到云服务：
+
+#### 步骤1：切换到云数据库（DATABASE_MODE=cloud）
+
+**前提条件：**
+- ✅ `DATABASE_URL` 已配置
+- ✅ Supabase PostgreSQL 表已初始化
+
+**切换步骤：**
+1. 在 `.env` 中设置：`DATABASE_MODE=cloud`
+2. 保持其他模式为 `local`：
+   ```bash
+   STORAGE_MODE=local
+   VECTOR_DB_MODE=local
+   DATABASE_MODE=cloud  # 只改这个
+   ```
+3. 测试：登录、注册、创建会话、发送消息
+
+**验证方法：**
+- 登录成功
+- 数据保存到 Supabase PostgreSQL
+- 在 Supabase Dashboard 的 Table Editor 中能看到数据
+
+#### 步骤2：切换到云存储（STORAGE_MODE=cloud）
+
+**前提条件：**
+- ✅ `SUPABASE_URL`、`SUPABASE_KEY`、`SUPABASE_SERVICE_KEY` 已配置
+- ✅ `SUPABASE_STORAGE_BUCKET` 已创建
+
+**切换步骤：**
+1. 在 `.env` 中设置：`STORAGE_MODE=cloud`
+2. 保持其他模式：
+   ```bash
+   STORAGE_MODE=cloud  # 改这个
+   VECTOR_DB_MODE=local
+   DATABASE_MODE=cloud
+   ```
+3. 测试：上传文档、查看文档、删除文档
+
+**验证方法：**
+- 文档上传成功
+- 在 Supabase Dashboard 的 Storage 中能看到文件
+- 文件路径格式：`user_{user_id}/{filename}`
+
+#### 步骤3：切换到云向量库（VECTOR_DB_MODE=cloud）
+
+**前提条件：**
+- ✅ `PINECONE_API_KEY` 已配置
+- ✅ `PINECONE_ENVIRONMENT` 已配置
+- ✅ `PINECONE_INDEX_NAME` 已创建（维度：1024）
+
+**切换步骤：**
+1. 在 `.env` 中设置：`VECTOR_DB_MODE=cloud`
+2. 所有模式都切换到云：
+   ```bash
+   STORAGE_MODE=cloud
+   VECTOR_DB_MODE=cloud  # 改这个
+   DATABASE_MODE=cloud
+   ```
+3. 测试：上传文档（向量化）、搜索文档、删除文档
+
+**验证方法：**
+- 文档上传后向量化成功
+- 在 Pinecone Dashboard 中能看到向量
+- 搜索功能正常
+- 多用户数据隔离正确（通过 metadata 过滤）
+
+#### 优势
+
+1. ✅ **逐步测试**：每次只改一个模块，容易定位问题
+2. ✅ **快速回滚**：出问题可以立即切回 local
+3. ✅ **混合模式**：支持部分云服务、部分本地
+4. ✅ **降低风险**：不会一次性影响所有功能
+
+---
+
+## 🔍 环境变量检查
+
+### 必需变量清单
+
+#### 基础配置（必须）
+
+| 变量名 | 说明 | 示例值 | 是否必需 |
+|--------|------|--------|---------|
+| `ANTHROPIC_API_KEY` | MiniMax API Key | `sk-xxx` | ✅ 是 |
+| `ANTHROPIC_BASE_URL` | MiniMax API 地址 | `https://api.minimaxi.com/anthropic` | ✅ 是 |
+
+#### 模式切换开关（必须）
+
+| 变量名 | 说明 | 可选值 | 默认值 | 是否必需 |
+|--------|------|--------|--------|---------|
+| `STORAGE_MODE` | 文件存储模式 | `local` 或 `cloud` | `local` | ✅ 是 |
+| `VECTOR_DB_MODE` | 向量库模式 | `local` 或 `cloud` | `local` | ✅ 是 |
+| `DATABASE_MODE` | 数据库模式 | `local` 或 `cloud` | `local` | ✅ 是 |
+
+#### 本地模式配置（STORAGE_MODE=local 时使用）
+
+| 变量名 | 说明 | 默认值 | 是否必需 |
+|--------|------|--------|---------|
+| `DATA_ROOT_DIR` | 数据根目录 | `data` | ✅ 是（local 模式） |
+| `USER_DATA_DIR` | 用户数据目录 | `data/users` | ✅ 是（local 模式） |
+| `CHROMA_DB_DIR` | Chroma 向量库目录 | `data/chroma` | ✅ 是（local 模式） |
+| `DATABASE_PATH` | SQLite 数据库路径 | `data/database/rag_system.db` | ✅ 是（local 模式） |
+| `MAX_FILE_SIZE` | 最大文件大小（字节） | `10485760` (10MB) | ✅ 是 |
+
+#### Supabase 配置（STORAGE_MODE=cloud 或 DATABASE_MODE=cloud 时使用）
+
+| 变量名 | 说明 | 示例值 | 是否必需 |
+|--------|------|--------|---------|
+| `SUPABASE_URL` | Supabase 项目 URL | `https://xxx.supabase.co` | ✅ 是（cloud 模式） |
+| `SUPABASE_KEY` | Supabase Publishable Key | `sb_publishable_xxx` | ✅ 是（cloud 模式） |
+| `SUPABASE_SERVICE_KEY` | Supabase Service Key | `sb_secret_xxx` | ✅ 是（cloud 模式） |
+| `SUPABASE_STORAGE_BUCKET` | Storage Bucket 名称 | `documents` | ✅ 是（STORAGE_MODE=cloud） |
+| `DATABASE_URL` | PostgreSQL 连接字符串 | `postgresql://postgres:xxx@db.xxx.supabase.co:5432/postgres` | ✅ 是（DATABASE_MODE=cloud） |
+
+#### Pinecone 配置（VECTOR_DB_MODE=cloud 时使用）
+
+| 变量名 | 说明 | 示例值 | 是否必需 |
+|--------|------|--------|---------|
+| `PINECONE_API_KEY` | Pinecone API Key | `xxx-xxx-xxx` | ✅ 是（VECTOR_DB_MODE=cloud） |
+| `PINECONE_ENVIRONMENT` | Pinecone 环境/区域 | `us-east-1` 或 `us-east1-gcp` | ✅ 是（VECTOR_DB_MODE=cloud） |
+| `PINECONE_INDEX_NAME` | Pinecone Index 名称 | `rag-system` | ✅ 是（VECTOR_DB_MODE=cloud） |
+
+#### 认证配置（必须）
+
+| 变量名 | 说明 | 默认值 | 是否必需 |
+|--------|------|--------|---------|
+| `AUTH_COOKIE_NAME` | Cookie 名称 | `rag_auth_token` | ✅ 是 |
+| `AUTH_COOKIE_KEY` | Cookie 加密密钥 | - | ✅ 是 |
+| `AUTH_COOKIE_EXPIRY_DAYS` | Cookie 过期天数 | `30` | ✅ 是 |
+| `MIN_PASSWORD_LENGTH` | 最小密码长度 | `6` | ✅ 是 |
+
+#### RAG 配置（必须）
+
+| 变量名 | 说明 | 默认值 | 是否必需 |
+|--------|------|--------|---------|
+| `EMBEDDING_MODEL` | Embedding 模型 | `BAAI/bge-large-zh-v1.5` | ✅ 是 |
+| `CHUNK_SIZE` | 文本块大小 | `800` | ✅ 是 |
+| `RETRIEVAL_K` | 检索数量 | `3` | ✅ 是 |
+| `LLM_MODEL` | LLM 模型 | `MiniMax-M2` | ✅ 是 |
+
+### 变量检查方法
+
+#### 手动检查
+
+1. **检查必需变量**：确认所有必需变量都已配置
+2. **验证变量格式**：确保没有 `your_xxx` 占位符
+3. **根据模式检查**：根据 `STORAGE_MODE`、`VECTOR_DB_MODE`、`DATABASE_MODE` 检查对应的云服务变量
+
+#### 环境变量检查报告
+
+根据你的 `.env` 文件，当前配置如下：
+
+**已正确配置的变量：**
+- ✅ 基础配置：`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`
+- ✅ 模式切换：`STORAGE_MODE`、`VECTOR_DB_MODE`、`DATABASE_MODE`
+- ✅ 认证配置：`AUTH_COOKIE_NAME`、`AUTH_COOKIE_KEY`、`AUTH_COOKIE_EXPIRY_DAYS`
+- ✅ RAG配置：`EMBEDDING_MODEL`、`CHUNK_SIZE`、`RETRIEVAL_K`、`LLM_MODEL`
+- ✅ 本地存储配置：`DATABASE_PATH`、`MAX_FILE_SIZE`
+
+**可选变量（有默认值，不影响运行）：**
+- ⚪ `MIN_PASSWORD_LENGTH` - 默认值：6
+- ⚪ `DATA_ROOT_DIR` - 默认值：data
+- ⚪ `USER_DATA_DIR` - 默认值：data/users
+- ⚪ `CHROMA_DB_DIR` - 默认值：data/chroma
+
+**云服务变量检查：**
+
+根据当前模式（`STORAGE_MODE`、`VECTOR_DB_MODE`、`DATABASE_MODE`），检查对应的云服务变量：
+
+- **STORAGE_MODE=cloud** 需要：`SUPABASE_URL`、`SUPABASE_KEY`、`SUPABASE_SERVICE_KEY`、`SUPABASE_STORAGE_BUCKET`
+- **DATABASE_MODE=cloud** 需要：`DATABASE_URL`
+- **VECTOR_DB_MODE=cloud** 需要：`PINECONE_API_KEY`、`PINECONE_ENVIRONMENT`、`PINECONE_INDEX_NAME`
+
+#### 变量格式验证
+
+**Supabase URL 格式**
+```
+✅ 正确：https://xxx.supabase.co
+❌ 错误：https://your-project-ref.supabase.co
+```
+
+**PostgreSQL 连接字符串格式**
+```
+✅ 正确：postgresql://postgres:password@db.xxx.supabase.co:5432/postgres
+❌ 错误：postgresql://postgres:your_password@db.your-project-ref.supabase.co:5432/postgres
+```
+
+**Pinecone API Key 格式**
+```
+✅ 正确：xxx-xxx-xxx（通常是字母数字和连字符）
+❌ 错误：your_pinecone_api_key
+```
+
+**Pinecone Environment 格式**
+```
+✅ 正确：us-east-1（AWS）
+✅ 正确：us-east1-gcp（GCP）
+❌ 错误：us-east-1-gcp（混合格式）
+```
+
+### 检查清单
+
+在开始代码改动前，请确认：
+
+- [ ] 所有必需变量都已配置
+- [ ] Supabase Storage Bucket 已创建
+- [ ] Supabase PostgreSQL 表已初始化
+- [ ] Pinecone Index 已创建（维度 1024）
+- [ ] 变量格式正确（无 `your_xxx` 占位符）
+- [ ] 已准备好分步骤测试
+
+---
+
 ## 📦 依赖包清单
 
 ### pyproject.toml
@@ -1552,6 +2129,432 @@ MIT License
 
 ---
 
-**最后更新：2025-11-14**
+## 📊 性能监控
+
+系统已集成性能监控功能，可以监控所有远程云服务的调用时间：
+
+### 监控范围
+
+- **Supabase Storage**：文件上传、下载、删除操作
+- **Pinecone**：向量添加、删除、搜索、统计操作
+- **PostgreSQL**：查询、插入、更新操作
+
+### 日志格式
+
+```
+[性能监控] ✅/❌ 服务名 | 操作名 | 耗时(ms) | 详情
+```
+
+### 日志级别
+
+- **> 5秒**：WARNING（警告）
+- **> 2秒**：INFO（信息）
+- **<= 2秒**：DEBUG（调试）
+
+### 查看日志
+
+- **控制台输出**：直接查看终端
+- **日志文件**：查看 `logs/` 目录（如果配置了文件日志）
+
+---
+
+## 🐛 错误处理
+
+系统已实现统一的数据库错误处理机制：
+
+### 错误处理工具
+
+- `utils/db_error_handler.py` - 统一错误处理工具
+- `DatabaseConnectionError` - 自定义异常类
+- `safe_db_operation` - 安全数据库操作包装器
+- `show_db_error_ui` - UI 错误显示函数
+
+### 错误处理流程
+
+```
+数据库操作
+  ↓
+ConnectionError 抛出
+  ↓
+safe_db_operation 捕获
+  ↓
+show_db_error_ui 显示友好提示
+  ↓
+返回默认值，应用继续运行 ✅
+```
+
+### 已应用位置
+
+- `app.py` - 用户信息和统计
+- `components/chat_interface.py` - 会话信息
+- `components/document_manager.py` - 文档管理
+- `services/document_service.py` - 文档服务
+
+---
+
+## ⚡ PostgreSQL 性能优化方案
+
+### 🔍 问题分析
+
+根据性能监控日志，每次 PostgreSQL 查询都需要 **2000ms+**，主要原因是：
+
+1. **每次查询都创建新连接**
+   - `get_connection()` 每次都调用 `psycopg2.connect()`
+   - 查询后立即关闭连接（`get_cursor()` 的 finally 块中）
+
+2. **连接建立开销大**
+   ```
+   每次连接需要：
+   - TCP 握手：~100-200ms
+   - SSL/TLS 握手：~300-500ms
+   - 数据库认证：~100-200ms
+   - 网络往返延迟：~500-1000ms（Supabase 在云端）
+   = 总计：1000-2000ms+
+   ```
+
+3. **没有连接复用**
+   - 没有连接池
+   - 没有持久连接
+   - 每次都是全新的连接
+
+### 💡 优化方案
+
+#### 方案1：连接池（推荐）⭐
+
+**原理**：使用 `psycopg2.pool.SimpleConnectionPool` 预创建连接，复用连接。
+
+**优势**：
+- ✅ 连接复用，避免每次建立连接的开销
+- ✅ 自动管理连接生命周期
+- ✅ 支持连接健康检查
+- ✅ 线程安全（Streamlit 多线程环境）
+
+**预期效果**：
+- 首次连接：~2000ms（建立连接池）
+- 后续查询：~50-200ms（复用连接）
+- **性能提升：10-40倍**
+
+**实施要点**：
+
+1. **连接池配置**
+   ```python
+   from psycopg2 import pool
+   
+   # 连接池参数
+   minconn = 2      # 最小连接数（保持活跃连接）
+   maxconn = 10     # 最大连接数（峰值并发）
+   ```
+
+2. **连接池初始化**
+   ```python
+   class DatabaseManager:
+       def __init__(self):
+           if self.db_type == "postgresql":
+               # 创建连接池
+               self._connection_pool = pool.SimpleConnectionPool(
+                   minconn=2,
+                   maxconn=10,
+                   dsn=config.DATABASE_URL
+               )
+   ```
+
+3. **从连接池获取连接**
+   ```python
+   def get_connection(self):
+       if self.db_type == "postgresql":
+           # 从连接池获取连接
+           conn = self._connection_pool.getconn()
+           # 检查连接是否有效
+           if not self._is_connection_alive(conn):
+               conn.close()
+               conn = psycopg2.connect(config.DATABASE_URL)
+           return conn
+   ```
+
+4. **归还连接到池**
+   ```python
+   def return_connection(self, conn):
+       if self.db_type == "postgresql":
+           # 归还连接到池（不关闭）
+           self._connection_pool.putconn(conn)
+   ```
+
+5. **连接健康检查**
+   ```python
+   def _is_connection_alive(self, conn):
+       """检查连接是否有效"""
+       try:
+           cursor = conn.cursor()
+           cursor.execute("SELECT 1")
+           cursor.close()
+           return True
+       except:
+           return False
+   ```
+
+**注意事项**：
+- 连接池在应用启动时创建
+- 连接使用后归还到池，不关闭
+- 需要处理连接失效的情况（自动重连）
+- 应用关闭时应该关闭连接池
+
+---
+
+#### 方案2：持久连接（简单方案）
+
+**原理**：保持一个全局连接，在应用生命周期内复用。
+
+**优势**：
+- ✅ 实现简单
+- ✅ 避免连接建立开销
+- ✅ 适合单线程场景
+
+**劣势**：
+- ⚠️ 连接可能失效（需要重连机制）
+- ⚠️ 不适合高并发场景
+- ⚠️ 连接长时间空闲可能被服务器关闭
+
+**预期效果**：
+- 首次连接：~2000ms
+- 后续查询：~50-200ms
+- **性能提升：10-40倍**
+
+**实施要点**：
+
+1. **全局连接变量**
+   ```python
+   class DatabaseManager:
+       def __init__(self):
+           self._persistent_conn = None
+   ```
+
+2. **获取持久连接**
+   ```python
+   def get_connection(self):
+       if self.db_type == "postgresql":
+           if self._persistent_conn is None or self._persistent_conn.closed:
+               # 创建新连接
+               self._persistent_conn = psycopg2.connect(config.DATABASE_URL)
+           return self._persistent_conn
+   ```
+
+3. **连接健康检查**
+   ```python
+   def _check_connection(self, conn):
+       try:
+           conn.cursor().execute("SELECT 1")
+           return True
+       except:
+           return False
+   ```
+
+---
+
+#### 方案3：查询优化
+
+**优化点**：
+
+1. **只查询需要的字段**
+   ```sql
+   -- ❌ 慢：查询所有字段
+   SELECT * FROM documents WHERE user_id = ?
+   
+   -- ✅ 快：只查询需要的字段
+   SELECT doc_id, filename, file_size FROM documents WHERE user_id = ?
+   ```
+
+2. **使用 LIMIT 限制结果**
+   ```sql
+   -- ✅ 已优化：使用 LIMIT
+   SELECT * FROM sessions WHERE user_id = ? LIMIT 50
+   ```
+
+3. **避免 N+1 查询**
+   ```python
+   # ❌ 慢：循环查询
+   for session in sessions:
+       messages = get_messages(session.id)  # N 次查询
+   
+   # ✅ 快：批量查询
+   session_ids = [s.id for s in sessions]
+   all_messages = get_messages_batch(session_ids)  # 1 次查询
+   ```
+
+4. **使用索引**
+   - 检查所有 `WHERE` 条件字段是否有索引
+   - 检查 `ORDER BY` 字段是否有索引
+
+**当前索引检查**：
+
+✅ 已有索引：
+- `users.username` - ✅ `idx_username`
+- `sessions.user_id, updated_at` - ✅ `idx_user_sessions`
+- `messages.session_id, created_at` - ✅ `idx_session_messages`
+- `documents.user_id, upload_at` - ✅ `idx_user_docs`
+
+---
+
+#### 方案4：批量操作优化
+
+**原理**：合并多个查询，减少网络往返次数。
+
+**优化场景**：
+
+1. **批量插入**
+   ```python
+   # ❌ 慢：循环插入
+   for item in items:
+       db.execute_insert("INSERT INTO ...", (item,))  # N 次查询
+   
+   # ✅ 快：批量插入
+   db.execute_batch("INSERT INTO ... VALUES %s", items)  # 1 次查询
+   ```
+
+2. **事务批量提交**
+   ```python
+   # ✅ 使用事务批量提交
+   with db.get_cursor() as cursor:
+       for item in items:
+           cursor.execute("INSERT INTO ...", (item,))
+       # 一次性提交
+   ```
+
+3. **合并统计查询**
+   ```python
+   # ❌ 慢：多次查询
+   doc_count = get_document_count(user_id)
+   storage = get_total_storage(user_id)
+   chunks = get_total_chunks(user_id)
+   
+   # ✅ 快：一次查询
+   stats = db.execute_one("""
+       SELECT 
+           COUNT(*) as doc_count,
+           SUM(file_size) as storage,
+           SUM(chunk_count) as chunks
+       FROM documents
+       WHERE user_id = ? AND status = 'active'
+   """, (user_id,))
+   ```
+
+---
+
+### 🎯 推荐实施顺序
+
+#### 第一步：连接池（最重要）⭐
+
+**优先级**：最高  
+**预计时间**：1-2小时  
+**预期效果**：2000ms → 50-200ms（**10-40倍提升**）
+
+**实施步骤**：
+1. 修改 `DatabaseManager` 类，添加连接池支持
+2. 实现连接池初始化和连接获取/归还
+3. 添加连接健康检查和自动重连
+4. 测试连接池功能
+
+#### 第二步：查询优化
+
+**优先级**：高  
+**预计时间**：1小时  
+**预期效果**：额外 20-50% 提升
+
+**实施步骤**：
+1. 检查所有 SQL 查询，只查询需要的字段
+2. 合并统计查询（如 `get_user_stats`）
+3. 检查并添加缺失的索引
+4. 优化 N+1 查询问题
+
+#### 第三步：批量操作
+
+**优先级**：中  
+**预计时间**：1小时  
+**预期效果**：批量操作场景下额外提升
+
+**实施步骤**：
+1. 识别批量操作场景
+2. 实现批量插入/更新方法
+3. 优化循环查询为批量查询
+
+---
+
+### 📊 性能对比预期
+
+#### 优化前
+```
+单次查询：2000ms+
+- 连接建立：1500ms
+- 查询执行：500ms
+```
+
+#### 优化后（连接池）
+```
+首次查询：2000ms（建立连接池）
+后续查询：50-200ms
+- 从池获取连接：<10ms
+- 查询执行：40-190ms
+```
+
+#### 性能提升
+- **首次查询**：无变化（需要建立连接池）
+- **后续查询**：**10-40倍提升**（2000ms → 50-200ms）
+
+---
+
+### ⚠️ 注意事项
+
+1. **连接池生命周期**
+   - 连接池在 `DatabaseManager.__init__()` 时创建
+   - 应用关闭时应该关闭连接池
+   - Streamlit 应用重启时会重新创建连接池
+
+2. **连接泄漏防护**
+   - 确保所有连接都正确归还到池
+   - 使用 `try-finally` 确保连接归还
+   - 监控连接池使用情况
+
+3. **连接超时处理**
+   - 设置合理的连接超时时间
+   - 处理连接获取超时的情况
+   - 提供降级方案（返回错误或使用本地模式）
+
+4. **线程安全**
+   - `SimpleConnectionPool` 是线程安全的
+   - Streamlit 虽然主要是单线程，但可能有后台任务
+   - 确保连接池在多线程环境下正常工作
+
+---
+
+### 📈 监控和验证
+
+#### 性能监控
+
+优化后，性能监控日志应该显示：
+```
+[性能监控] ✅ PostgreSQL | execute_query | 50-200ms | type=SELECT
+[性能监控] ✅ PostgreSQL | execute_one | 50-200ms | type=SELECT
+```
+
+#### 验证方法
+
+1. **对比测试**
+   - 优化前：记录平均查询时间
+   - 优化后：记录平均查询时间
+   - 计算性能提升比例
+
+2. **压力测试**
+   - 连续执行 100 次查询
+   - 观察连接池使用情况
+   - 检查是否有连接泄漏
+
+3. **监控指标**
+   - 连接池使用率
+   - 连接获取时间
+   - 查询执行时间
+   - 连接失效次数
+
+---
+
+**最后更新：2025-01-23**
 
 **版本：1.0.0**

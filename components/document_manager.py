@@ -45,18 +45,62 @@ def _show_embedding_model_status():
 
 def _show_statistics(user_id: int, doc_service):
     """显示统计信息"""
-    stats = doc_service.get_user_stats(user_id)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("📄 文档数量", stats['document_count'])
-    
-    with col2:
-        st.metric("🧩 向量块数", stats['vector_count'])
-    
-    with col3:
-        st.metric("💾 存储空间", stats['storage_used_formatted'])
+    try:
+        stats = doc_service.get_user_stats(user_id)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("📄 文档数量", stats['document_count'])
+        
+        with col2:
+            st.metric("🧩 向量块数", stats['vector_count'])
+        
+        with col3:
+            st.metric("💾 存储空间", stats['storage_used_formatted'])
+    except ConnectionError as e:
+        # 数据库连接失败，显示友好的错误提示
+        st.error("⚠️ 无法连接到数据库")
+        error_msg = str(e)
+        
+        # 检查是否是 DNS 解析失败
+        if "DNS 解析失败" in error_msg or "nodename nor servname" in error_msg:
+            st.warning("""
+            **网络连接问题**
+            
+            无法连接到 Supabase PostgreSQL 数据库。这可能是由于：
+            - 网络连接不稳定
+            - DNS 解析失败
+            - 防火墙阻止了连接
+            
+            **解决方案：**
+            1. 检查网络连接
+            2. 确认 `DATABASE_URL` 配置正确
+            3. 如果问题持续，可以暂时切换到本地模式：
+               - 在 `.env` 文件中设置 `DATABASE_MODE=local`
+               - 重启应用
+            """)
+        else:
+            st.warning(f"数据库连接错误：{error_msg}")
+        
+        # 显示默认统计值
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📄 文档数量", "N/A")
+        with col2:
+            st.metric("🧩 向量块数", "N/A")
+        with col3:
+            st.metric("💾 存储空间", "N/A")
+    except Exception as e:
+        st.error(f"获取统计信息失败: {str(e)}")
+        # 显示默认统计值
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📄 文档数量", "N/A")
+        with col2:
+            st.metric("🧩 向量块数", "N/A")
+        with col3:
+            st.metric("💾 存储空间", "N/A")
 
 
 def _show_upload_section(user_id: int, doc_service):
@@ -102,7 +146,23 @@ def _show_document_list(user_id: int, doc_service):
     st.markdown("<h3 style='margin: 4px 0 6px 0; font-size: 1.1rem;'>📋 我的文档</h3>", unsafe_allow_html=True)
     
     # 获取文档列表
-    documents = doc_service.get_user_documents(user_id)
+    try:
+        documents = doc_service.get_user_documents(user_id)
+    except ConnectionError as e:
+        st.error("⚠️ 无法连接到数据库，无法加载文档列表")
+        error_msg = str(e)
+        if "DNS 解析失败" in error_msg or "nodename nor servname" in error_msg:
+            st.warning("""
+            **网络连接问题**
+            
+            无法连接到 Supabase PostgreSQL 数据库。请检查网络连接或切换到本地模式。
+            """)
+        else:
+            st.warning(f"数据库连接错误：{error_msg}")
+        documents = []
+    except Exception as e:
+        st.error(f"获取文档列表失败: {str(e)}")
+        documents = []
     
     if not documents:
         st.info("暂无文档。请上传文档以开始使用智能问答功能。")
@@ -197,10 +257,22 @@ def _show_document_preview(user_id: int, doc_id: str, filename: str, doc_service
     def preview_dialog():
         # 获取文档信息
         from database import DocumentDAO
-        doc_dao = DocumentDAO()
-        doc = doc_dao.get_document(doc_id)
+        from utils.db_error_handler import safe_db_operation, show_db_error_ui
         
-        preview_content = doc_service.get_document_preview(user_id, doc_id, max_length=2000)
+        doc_dao = DocumentDAO()
+        try:
+            doc = safe_db_operation(
+                lambda: doc_dao.get_document(doc_id),
+                default_value=None,
+                error_context="获取文档信息"
+            )
+            if doc:
+                preview_content = doc_service.get_document_preview(user_id, doc_id, max_length=2000)
+            else:
+                preview_content = "文档不存在"
+        except Exception as e:
+            show_db_error_ui(e, "获取文档预览")
+            preview_content = "无法加载文档预览"
         
         if preview_content:
             # 格式化文件大小

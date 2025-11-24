@@ -6,7 +6,7 @@ authors = ["Jonas"]
 package-mode = false
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = ">=3.10,<3.14"
 langchain = "^1.0.0"
 langchain-anthropic = "^1.0.0"
 langchain-core = "^1.0.0"
@@ -26,6 +26,15 @@ python-docx = "^1.2.0"
 python-dotenv = "^1.2.1"
 python-multipart = "^0.0.20"
 streamlit-cookies-controller = "^0.0.4"
+# ===== 云服务依赖（可选，仅在 cloud 模式下需要）=====
+# Supabase Storage 依赖（STORAGE_MODE=cloud 时需要）
+supabase = "^2.0.0"
+# PostgreSQL 依赖（DATABASE_MODE=cloud 时需要）
+psycopg2-binary = "^2.9.9"
+# Pinecone 依赖（VECTOR_DB_MODE=cloud 时需要）
+# 使用最新版本 langchain-pinecone 0.2.x（兼容 langchain-core 1.0.0）
+pinecone-client = "^6.0.0"
+langchain-pinecone = "^0.2.13"
 
 [build-system]
 requires = ["poetry-core"]

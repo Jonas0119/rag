@@ -201,20 +201,24 @@ class AuthManager:
     # ========== 内部辅助方法 ==========
 
     def _create_user_directories(self, user_id: int):
-        """为新用户创建目录结构"""
+        """为新用户创建目录结构（仅在本地模式下）"""
         from pathlib import Path
+        from utils.config import config
         
-        # 创建用户目录
-        user_dir = Path(f"data/users/user_{user_id}")
-        user_dir.mkdir(parents=True, exist_ok=True)
+        # 仅在本地模式下创建目录
+        if config.STORAGE_MODE == "local":
+            # 创建用户目录
+            user_dir = Path(f"data/users/user_{user_id}")
+            user_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 创建子目录
+            (user_dir / "uploads").mkdir(exist_ok=True)
+            (user_dir / "exports").mkdir(exist_ok=True)
         
-        # 创建子目录
-        (user_dir / "uploads").mkdir(exist_ok=True)
-        (user_dir / "exports").mkdir(exist_ok=True)
-        
-        # 创建向量库目录
-        chroma_dir = Path(f"data/chroma/user_{user_id}_collection")
-        chroma_dir.mkdir(parents=True, exist_ok=True)
+        if config.VECTOR_DB_MODE == "local":
+            # 创建向量库目录
+            chroma_dir = Path(f"data/chroma/user_{user_id}_collection")
+            chroma_dir.mkdir(parents=True, exist_ok=True)
     
     def _generate_token(self, user_id: int, username: str, display_name: str) -> str:
         """生成 JWT Token"""

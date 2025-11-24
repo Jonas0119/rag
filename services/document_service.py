@@ -2,6 +2,7 @@
 文档服务 - 文档上传、处理、管理
 """
 import os
+import logging
 from typing import Optional, List, Tuple
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_core.documents import Document
 
 from database import DocumentDAO
+
+logger = logging.getLogger(__name__)
 from utils.file_handler import (
     is_allowed_file, validate_file_size, generate_safe_filename,
     save_uploaded_file, delete_file, read_text_file, format_file_size
@@ -48,11 +51,18 @@ class DocumentService:
         
         # 生成安全文件名
         safe_filename = generate_safe_filename(uploaded_file.name)
-        user_dir = f"{config.USER_DATA_DIR}/user_{user_id}/uploads"
-        filepath = os.path.join(user_dir, safe_filename)
+        
+        # 根据存储模式设置文件路径
+        if config.STORAGE_MODE == "cloud":
+            # 云存储路径格式：user_{user_id}/{filename}
+            filepath = f"user_{user_id}/{safe_filename}"
+        else:
+            # 本地文件路径
+            user_dir = f"{config.USER_DATA_DIR}/user_{user_id}/uploads"
+            filepath = os.path.join(user_dir, safe_filename)
         
         # 保存文件
-        if not save_uploaded_file(uploaded_file, filepath):
+        if not save_uploaded_file(uploaded_file, filepath, user_id=user_id):
             return False, "文件保存失败"
         
         # 获取文件扩展名
@@ -94,27 +104,71 @@ class DocumentService:
         """
         try:
             # 1. 解析文档
-            if file_type == '.pdf':
-                loader = PyPDFLoader(filepath)
-                pages = loader.load()
-                full_text = "\n\n".join([page.page_content for page in pages])
-                page_count = len(pages)
-            elif file_type in ['.txt', '.md']:
-                full_text = read_text_file(filepath)
-                if not full_text:
-                    return False, "无法读取文件内容"
-                page_count = None
-            elif file_type == '.docx':
-                # Word 文档处理
+            # 根据存储模式读取文件
+            if config.STORAGE_MODE == "cloud":
+                # 云存储：先下载文件到临时位置
+                from utils.file_handler import read_file_bytes
+                from utils.supabase_storage import get_supabase_storage
+                import tempfile
+                
+                storage = get_supabase_storage()
+                if storage is None:
+                    return False, "Supabase Storage 未初始化"
+                
+                file_data = storage.download_file(filepath)
+                if file_data is None:
+                    return False, "无法从云存储下载文件"
+                
+                # 创建临时文件
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_type) as tmp_file:
+                    tmp_file.write(file_data)
+                    tmp_file_path = tmp_file.name
+                
                 try:
-                    from docx import Document as DocxDocument
-                    doc = DocxDocument(filepath)
-                    full_text = "\n\n".join([para.text for para in doc.paragraphs if para.text.strip()])
-                    page_count = None
-                except Exception as e:
-                    return False, f"Word 文档解析失败：{str(e)}"
+                    if file_type == '.pdf':
+                        loader = PyPDFLoader(tmp_file_path)
+                        pages = loader.load()
+                        full_text = "\n\n".join([page.page_content for page in pages])
+                        page_count = len(pages)
+                    elif file_type in ['.txt', '.md']:
+                        full_text = file_data.decode('utf-8', errors='ignore')
+                        if not full_text:
+                            return False, "无法读取文件内容"
+                        page_count = None
+                    elif file_type == '.docx':
+                        from docx import Document as DocxDocument
+                        doc = DocxDocument(tmp_file_path)
+                        full_text = "\n\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+                        page_count = None
+                    else:
+                        return False, f"不支持的文件类型：{file_type}"
+                finally:
+                    # 删除临时文件
+                    if os.path.exists(tmp_file_path):
+                        os.remove(tmp_file_path)
             else:
-                return False, f"不支持的文件类型：{file_type}"
+                # 本地文件系统（原有逻辑）
+                if file_type == '.pdf':
+                    loader = PyPDFLoader(filepath)
+                    pages = loader.load()
+                    full_text = "\n\n".join([page.page_content for page in pages])
+                    page_count = len(pages)
+                elif file_type in ['.txt', '.md']:
+                    full_text = read_text_file(filepath)
+                    if not full_text:
+                        return False, "无法读取文件内容"
+                    page_count = None
+                elif file_type == '.docx':
+                    # Word 文档处理
+                    try:
+                        from docx import Document as DocxDocument
+                        doc = DocxDocument(filepath)
+                        full_text = "\n\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+                        page_count = None
+                    except Exception as e:
+                        return False, f"Word 文档解析失败：{str(e)}"
+                else:
+                    return False, f"不支持的文件类型：{file_type}"
             
             # 2. 段落级别分块
             chunks = split_by_paragraphs(full_text)
@@ -189,8 +243,13 @@ class DocumentService:
             self.vector_service.delete_documents(user_id, doc_id)
             
             # 3. 删除物理文件
-            if os.path.exists(doc.filepath):
+            if config.STORAGE_MODE == "cloud":
+                # 云存储：直接删除
                 delete_file(doc.filepath)
+            else:
+                # 本地文件系统：检查文件是否存在
+                if os.path.exists(doc.filepath):
+                    delete_file(doc.filepath)
             
             # 4. 标记数据库记录为已删除
             self.doc_dao.delete_document(doc_id)
@@ -220,27 +279,78 @@ class DocumentService:
             # 根据文件类型读取内容
             content = None
             
-            if doc.file_type == '.pdf':
-                # PDF 文件使用 PyPDFLoader
-                try:
-                    loader = PyPDFLoader(doc.filepath)
-                    pages = loader.load()
-                    content = "\n\n".join([page.page_content for page in pages])
-                except Exception as e:
-                    return f"PDF 预览失败: {str(e)}"
-            
-            elif doc.file_type == '.docx':
-                # Word 文档
-                try:
-                    from docx import Document as DocxDocument
-                    docx_doc = DocxDocument(doc.filepath)
-                    content = "\n\n".join([para.text for para in docx_doc.paragraphs if para.text.strip()])
-                except Exception as e:
-                    return f"Word 文档预览失败: {str(e)}"
-            
-            elif doc.file_type in ['.txt', '.md']:
-                # 文本文件
-                content = read_text_file(doc.filepath)
+            if config.STORAGE_MODE == "cloud":
+                # 云存储：先下载文件
+                from utils.file_handler import read_file_bytes
+                from utils.supabase_storage import get_supabase_storage
+                import tempfile
+                
+                storage = get_supabase_storage()
+                if storage is None:
+                    return "Supabase Storage 未初始化"
+                
+                file_data = storage.download_file(doc.filepath)
+                if file_data is None:
+                    return "无法从云存储下载文件"
+                
+                # 根据文件类型处理
+                if doc.file_type == '.pdf':
+                    # PDF 文件：创建临时文件
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                        tmp_file.write(file_data)
+                        tmp_file_path = tmp_file.name
+                    try:
+                        loader = PyPDFLoader(tmp_file_path)
+                        pages = loader.load()
+                        content = "\n\n".join([page.page_content for page in pages])
+                    except Exception as e:
+                        return f"PDF 预览失败: {str(e)}"
+                    finally:
+                        if os.path.exists(tmp_file_path):
+                            os.remove(tmp_file_path)
+                elif doc.file_type == '.docx':
+                    # Word 文档：创建临时文件
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp_file:
+                        tmp_file.write(file_data)
+                        tmp_file_path = tmp_file.name
+                    try:
+                        from docx import Document as DocxDocument
+                        docx_doc = DocxDocument(tmp_file_path)
+                        content = "\n\n".join([para.text for para in docx_doc.paragraphs if para.text.strip()])
+                    except Exception as e:
+                        return f"Word 文档预览失败: {str(e)}"
+                    finally:
+                        if os.path.exists(tmp_file_path):
+                            os.remove(tmp_file_path)
+                elif doc.file_type in ['.txt', '.md']:
+                    # 文本文件：直接解码
+                    try:
+                        content = file_data.decode('utf-8')
+                    except UnicodeDecodeError:
+                        content = file_data.decode('gbk', errors='ignore')
+            else:
+                # 本地文件系统（原有逻辑）
+                if doc.file_type == '.pdf':
+                    # PDF 文件使用 PyPDFLoader
+                    try:
+                        loader = PyPDFLoader(doc.filepath)
+                        pages = loader.load()
+                        content = "\n\n".join([page.page_content for page in pages])
+                    except Exception as e:
+                        return f"PDF 预览失败: {str(e)}"
+                
+                elif doc.file_type == '.docx':
+                    # Word 文档
+                    try:
+                        from docx import Document as DocxDocument
+                        docx_doc = DocxDocument(doc.filepath)
+                        content = "\n\n".join([para.text for para in docx_doc.paragraphs if para.text.strip()])
+                    except Exception as e:
+                        return f"Word 文档预览失败: {str(e)}"
+                
+                elif doc.file_type in ['.txt', '.md']:
+                    # 文本文件
+                    content = read_text_file(doc.filepath)
             
             if not content:
                 return "无法读取文档内容"
@@ -255,17 +365,30 @@ class DocumentService:
     
     def get_user_stats(self, user_id: int) -> dict:
         """获取用户文档统计"""
-        doc_count = self.doc_dao.get_document_count(user_id)
-        storage_used = self.doc_dao.get_total_storage(user_id)
-        # 优化：从数据库获取块数，比查询向量库快很多
-        vector_count = self.doc_dao.get_total_chunk_count(user_id)
-        
-        return {
-            'document_count': doc_count,
-            'storage_used': storage_used,
-            'storage_used_formatted': format_file_size(storage_used),
-            'vector_count': vector_count
-        }
+        try:
+            doc_count = self.doc_dao.get_document_count(user_id)
+            storage_used = self.doc_dao.get_total_storage(user_id)
+            # 优化：从数据库获取块数，比查询向量库快很多
+            vector_count = self.doc_dao.get_total_chunk_count(user_id)
+            
+            return {
+                'document_count': doc_count,
+                'storage_used': storage_used,
+                'storage_used_formatted': format_file_size(storage_used),
+                'vector_count': vector_count
+            }
+        except ConnectionError as e:
+            # 数据库连接失败，返回默认值并抛出异常供 UI 层处理
+            raise ConnectionError(str(e))
+        except Exception as e:
+            # 其他错误，返回默认值
+            logger.error(f"[文档服务] 获取用户统计失败: {str(e)}")
+            return {
+                'document_count': 0,
+                'storage_used': 0,
+                'storage_used_formatted': format_file_size(0),
+                'vector_count': 0
+            }
 
 
 # 全局文档服务实例

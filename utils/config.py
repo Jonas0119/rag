@@ -48,6 +48,27 @@ class Config:
     AUTH_COOKIE_KEY = os.getenv("AUTH_COOKIE_KEY", "default_secret_key")
     AUTH_COOKIE_EXPIRY_DAYS = int(os.getenv("AUTH_COOKIE_EXPIRY_DAYS", 30))
     MIN_PASSWORD_LENGTH = int(os.getenv("MIN_PASSWORD_LENGTH", 6))
+    
+    # ==================== 存储模式切换 ====================
+    # local: 使用本地文件系统/SQLite/Chroma
+    # cloud: 使用云服务（Supabase/Pinecone）
+    STORAGE_MODE = os.getenv("STORAGE_MODE", "local")
+    VECTOR_DB_MODE = os.getenv("VECTOR_DB_MODE", "local")
+    DATABASE_MODE = os.getenv("DATABASE_MODE", "local")
+    
+    # ==================== Supabase 配置 ====================
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+    SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "rag")
+    
+    # ==================== Supabase PostgreSQL 配置 ====================
+    DATABASE_URL = os.getenv("DATABASE_URL", "")
+    
+    # ==================== Pinecone 配置 ====================
+    PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
+    PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT", "")
+    PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "rag-system")
 
 
 # 全局配置实例

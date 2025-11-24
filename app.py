@@ -1524,8 +1524,18 @@ def show_settings_page(user_id: int):
     st.subheader("👤 用户信息")
     
     from database import UserDAO
+    from utils.db_error_handler import safe_db_operation, show_db_error_ui
+    
     user_dao = UserDAO()
-    user = user_dao.get_user_by_id(user_id)
+    try:
+        user = safe_db_operation(
+            lambda: user_dao.get_user_by_id(user_id),
+            default_value=None,
+            error_context="获取用户信息"
+        )
+    except Exception as e:
+        show_db_error_ui(e, "获取用户信息")
+        user = None
     
     if user:
         col1, col2 = st.columns(2)
@@ -1546,24 +1556,44 @@ def show_settings_page(user_id: int):
     # 从各个 DAO 获取实时统计
     from database import SessionDAO, MessageDAO, DocumentDAO
     from services import get_document_service
+    from utils.db_error_handler import safe_db_operation, show_db_error_ui
     
     session_dao = SessionDAO()
     message_dao = MessageDAO()
     doc_dao = DocumentDAO()
     doc_service = get_document_service()
     
-    # 获取实时数据
-    sessions = session_dao.get_user_sessions(user_id)
-    total_sessions = len(sessions)
-    
-    total_messages = 0
-    for session in sessions:
-        messages = message_dao.get_session_messages(session.session_id)
-        total_messages += len(messages)
-    
-    doc_stats = doc_service.get_user_stats(user_id)
-    total_documents = doc_stats['document_count']
-    storage_used = doc_stats['storage_used']
+    # 获取实时数据（使用安全操作包装）
+    try:
+        sessions = safe_db_operation(
+            lambda: session_dao.get_user_sessions(user_id),
+            default_value=[],
+            error_context="获取会话列表"
+        )
+        total_sessions = len(sessions)
+        
+        total_messages = 0
+        for session in sessions:
+            messages = safe_db_operation(
+                lambda s=session: message_dao.get_session_messages(s.session_id),
+                default_value=[],
+                error_context="获取消息列表"
+            )
+            total_messages += len(messages)
+        
+        doc_stats = safe_db_operation(
+            lambda: doc_service.get_user_stats(user_id),
+            default_value={'document_count': 0, 'storage_used': 0},
+            error_context="获取文档统计"
+        )
+        total_documents = doc_stats.get('document_count', 0)
+        storage_used = doc_stats.get('storage_used', 0)
+    except Exception as e:
+        show_db_error_ui(e, "获取使用统计")
+        total_sessions = 0
+        total_messages = 0
+        total_documents = 0
+        storage_used = 0
     
     # 显示统计
     col1, col2, col3 = st.columns(3)

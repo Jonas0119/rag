@@ -24,10 +24,18 @@ class UserDAO:
         Returns:
             user_id: 新创建用户的 ID
         """
-        query = """
-            INSERT INTO users (username, password_hash, email, display_name)
-            VALUES (?, ?, ?, ?)
-        """
+        # 根据数据库类型选择不同的 INSERT 语句
+        if self.db.db_type == "postgresql":
+            query = """
+                INSERT INTO users (username, password_hash, email, display_name)
+                VALUES (?, ?, ?, ?)
+                RETURNING user_id
+            """
+        else:
+            query = """
+                INSERT INTO users (username, password_hash, email, display_name)
+                VALUES (?, ?, ?, ?)
+            """
         user_id = self.db.execute_insert(
             query, 
             (username, password_hash, email, display_name or username)
@@ -112,6 +120,7 @@ class UserDAO:
     
     def _init_user_stats(self, user_id: int):
         """初始化用户统计"""
+        # PostgreSQL 不需要返回 ID，所以不需要 RETURNING
         query = """
             INSERT INTO user_stats (user_id, last_active)
             VALUES (?, CURRENT_TIMESTAMP)

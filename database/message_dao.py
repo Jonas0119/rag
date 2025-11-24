@@ -32,13 +32,24 @@ class MessageDAO:
         Returns:
             message_id: 新创建消息的 ID
         """
-        query = """
-            INSERT INTO messages (
-                session_id, role, content, 
-                retrieved_docs, thinking_process, tokens_used
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-        """
+        # 根据数据库类型选择不同的 INSERT 语句
+        if self.db.db_type == "postgresql":
+            query = """
+                INSERT INTO messages (
+                    session_id, role, content, 
+                    retrieved_docs, thinking_process, tokens_used
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                RETURNING message_id
+            """
+        else:
+            query = """
+                INSERT INTO messages (
+                    session_id, role, content, 
+                    retrieved_docs, thinking_process, tokens_used
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            """
         
         # 将字典/列表转为 JSON 字符串
         retrieved_docs_json = json.dumps(retrieved_docs) if retrieved_docs else None
