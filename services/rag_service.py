@@ -11,20 +11,8 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 
 from utils.config import config
+from utils.prompts import RAG_TEMPLATE, DIRECT_ANSWER_TEMPLATE
 from .vector_store_service import get_vector_store_service
-
-
-# RAG Prompt 模板
-RAG_TEMPLATE = """你是一个专业的文档分析助手。请基于以下检索到的相关内容回答问题。
-
-相关文档内容：
-{context}
-
-用户问题：
-{question}
-
-请仔细分析文档内容，给出详细和准确的回答。如果文档中没有相关信息，请如实说明。
-"""
 
 
 class RAGService:
@@ -34,6 +22,7 @@ class RAGService:
         self.vector_service = get_vector_store_service()
         self.llm = self._init_llm()
         self.prompt = ChatPromptTemplate.from_template(RAG_TEMPLATE)
+        self.direct_prompt = ChatPromptTemplate.from_template(DIRECT_ANSWER_TEMPLATE)
     
     def _init_llm(self):
         """初始化 LLM"""
@@ -80,16 +69,64 @@ class RAGService:
         
         docs_with_scores = self.vector_service.search_with_score(user_id, question, k=k)
         
+        # 判断是否需要降级到直接回答
+        should_fallback = False
+        fallback_reason = ""
+        
         if not docs_with_scores:
+            # 情况 A：没有检索到文档
+            should_fallback = True
+            fallback_reason = "未找到相关文档"
+        elif config.RAG_FALLBACK_ENABLED:
+            # 情况 B：检查相似度阈值
+            max_similarity = max([max(0, 1 - score) for _, score in docs_with_scores])
+            if max_similarity < config.RAG_SIMILARITY_THRESHOLD:
+                should_fallback = True
+                fallback_reason = f"相似度太低（最高相似度: {max_similarity:.2f}）"
+        
+        if should_fallback:
+            # 使用直接回答模式
+            thinking_process.append({
+                'step': 2,
+                'action': '降级到直接回答',
+                'description': fallback_reason,
+                'details': '使用大模型直接回答，不依赖知识库'
+            })
+            
+            thinking_process.append({
+                'step': 3,
+                'action': '生成答案',
+                'description': '使用大模型直接回答',
+                'details': '不依赖知识库内容'
+            })
+            
+            # 使用直接回答 Chain
+            direct_chain = self.direct_prompt | self.llm | StrOutputParser()
+            answer = direct_chain.invoke({"question": question})
+            
+            elapsed_time = time.time() - start_time
+            
+            thinking_process.append({
+                'step': 4,
+                'action': '完成',
+                'description': f'回答生成完成',
+                'details': f'耗时: {elapsed_time:.2f} 秒'
+            })
+            
+            # 估算 Token 消耗（直接回答没有上下文）
+            estimated_tokens = len(question) // 4 + len(answer) // 4
+            
             return {
-                'answer': '抱歉，我在知识库中没有找到相关信息。请确保已上传相关文档。',
+                'answer': answer,
                 'retrieved_docs': [],
                 'thinking_process': thinking_process,
-                'elapsed_time': time.time() - start_time,
-                'tokens_used': 0
+                'elapsed_time': elapsed_time,
+                'tokens_used': estimated_tokens,
+                'fallback_mode': True,
+                'fallback_reason': fallback_reason
             }
         
-        # 2. 处理检索结果
+        # 2. 处理检索结果（RAG 模式）
         retrieved_docs = []
         context_parts = []
         
@@ -151,7 +188,8 @@ class RAGService:
             'retrieved_docs': retrieved_docs,
             'thinking_process': thinking_process,
             'elapsed_time': elapsed_time,
-            'tokens_used': estimated_tokens
+            'tokens_used': estimated_tokens,
+            'fallback_mode': False
         }
     
     def query_stream(self, user_id: int, question: str, k: int = None) -> Generator[Dict, None, None]:
@@ -198,24 +236,79 @@ class RAGService:
         
         docs_with_scores = self.vector_service.search_with_score(user_id, question, k=k)
         
+        # 判断是否需要降级到直接回答
+        should_fallback = False
+        fallback_reason = ""
+        
         if not docs_with_scores:
-            # 没有检索到文档，直接返回
-            elapsed_time = time.time() - start_time
+            # 情况 A：没有检索到文档
+            should_fallback = True
+            fallback_reason = "未找到相关文档"
+        elif config.RAG_FALLBACK_ENABLED:
+            # 情况 B：检查相似度阈值
+            max_similarity = max([max(0, 1 - score) for _, score in docs_with_scores])
+            if max_similarity < config.RAG_SIMILARITY_THRESHOLD:
+                should_fallback = True
+                fallback_reason = f"相似度太低（最高相似度: {max_similarity:.2f}）"
+        
+        if should_fallback:
+            # 使用直接回答模式（流式）
+            thinking_process.append({
+                'step': 2,
+                'action': '降级到直接回答',
+                'description': fallback_reason,
+                'details': '使用大模型直接回答，不依赖知识库'
+            })
+            
+            thinking_process.append({
+                'step': 3,
+                'action': '生成答案',
+                'description': '使用大模型直接回答',
+                'details': '不依赖知识库内容'
+            })
+            
+            # 先 yield 思考过程
             yield {
                 'type': 'thinking',
                 'thinking_process': thinking_process
             }
+            
+            # 流式生成直接回答
+            direct_chain = self.direct_prompt | self.llm | StrOutputParser()
+            full_answer = ""
+            for chunk in direct_chain.stream({"question": question}):
+                full_answer += chunk
+                yield {
+                    'type': 'chunk',
+                    'content': chunk
+                }
+            
+            elapsed_time = time.time() - start_time
+            
+            thinking_process.append({
+                'step': 4,
+                'action': '完成',
+                'description': f'回答生成完成',
+                'details': f'耗时: {elapsed_time:.2f} 秒'
+            })
+            
+            # 估算 Token 消耗（直接回答没有上下文）
+            estimated_tokens = len(question) // 4 + len(full_answer) // 4
+            
+            # 最后 yield 完整结果
             yield {
                 'type': 'complete',
-                'answer': '抱歉，我在知识库中没有找到相关信息。请确保已上传相关文档。',
+                'answer': full_answer,
                 'retrieved_docs': [],
                 'thinking_process': thinking_process,
                 'elapsed_time': elapsed_time,
-                'tokens_used': 0
+                'tokens_used': estimated_tokens,
+                'fallback_mode': True,
+                'fallback_reason': fallback_reason
             }
             return
         
-        # 2. 处理检索结果
+        # 2. 处理检索结果（RAG 模式）
         retrieved_docs = []
         context_parts = []
         
@@ -292,7 +385,8 @@ class RAGService:
             'retrieved_docs': retrieved_docs,
             'thinking_process': thinking_process,
             'elapsed_time': elapsed_time,
-            'tokens_used': estimated_tokens
+            'tokens_used': estimated_tokens,
+            'fallback_mode': False
         }
     
     def format_docs(self, docs) -> str:

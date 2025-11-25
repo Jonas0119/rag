@@ -2,7 +2,8 @@
 文档管理组件
 """
 import streamlit as st
-from services import get_document_service, get_vector_store_service
+from services import get_document_service, get_vector_store_service, get_cached_user_stats
+from utils.config import config
 
 
 def show_document_manager(user_id: int):
@@ -43,10 +44,18 @@ def _show_embedding_model_status():
         st.warning(f"⚠️ Embedding 模型未加载: {status['model_name']}")
 
 
+@st.cache_data(ttl=120)  # 缓存120秒
+def _get_cached_documents(user_id: int):
+    """缓存文档列表"""
+    doc_service = get_document_service()
+    return doc_service.get_user_documents(user_id)
+
+
 def _show_statistics(user_id: int, doc_service):
     """显示统计信息"""
     try:
-        stats = doc_service.get_user_stats(user_id)
+        # 使用缓存的统计数据，避免频繁查询
+        stats = get_cached_user_stats(user_id)
         
         col1, col2, col3 = st.columns(3)
         
@@ -111,10 +120,13 @@ def _show_upload_section(user_id: int, doc_service):
     if 'uploader_key' not in st.session_state:
         st.session_state.uploader_key = 0
     
+    # 动态获取最大文件大小（MB）
+    max_size_mb = config.MAX_FILE_SIZE / (1024 * 1024)
+    
     uploaded_file = st.file_uploader(
         "选择文件",
         type=['pdf', 'txt', 'md', 'docx'],
-        help="支持 PDF、TXT、Markdown、Word 文档，最大 10MB",
+        help=f"支持 PDF、TXT、Markdown、Word 文档，最大 {max_size_mb:.0f}MB",
         key=f"file_uploader_{st.session_state.uploader_key}"
     )
     
@@ -130,6 +142,9 @@ def _show_upload_section(user_id: int, doc_service):
                     
                     if success:
                         st.success(f"✅ {message}")
+                        # 精确清除文档相关缓存
+                        get_cached_user_stats.clear()
+                        _get_cached_documents.clear()
                         # 上传成功后，更新 key 以清空文件选择器
                         st.session_state.uploader_key += 1
                         st.rerun()
@@ -145,9 +160,9 @@ def _show_document_list(user_id: int, doc_service):
     # 使用更紧凑的标题样式
     st.markdown("<h3 style='margin: 4px 0 6px 0; font-size: 1.1rem;'>📋 我的文档</h3>", unsafe_allow_html=True)
     
-    # 获取文档列表
+    # 获取文档列表（使用缓存）
     try:
-        documents = doc_service.get_user_documents(user_id)
+        documents = _get_cached_documents(user_id)
     except ConnectionError as e:
         st.error("⚠️ 无法连接到数据库，无法加载文档列表")
         error_msg = str(e)
@@ -390,9 +405,11 @@ def _confirm_delete_document(user_id: int, doc_id: str, filename: str, doc_servi
                     
                     if success:
                         st.success(message)
+                        # 精确清除文档相关缓存
+                        get_cached_user_stats.clear()
+                        _get_cached_documents.clear()
                         st.rerun()
                     else:
                         st.error(message)
     
     delete_dialog()
-

@@ -19,7 +19,7 @@ DATA_ROOT_DIR=data
 USER_DATA_DIR=data/users
 CHROMA_DB_DIR=data/chroma
 DATABASE_PATH=data/database/rag_system.db
-MAX_FILE_SIZE=10485760
+MAX_FILE_SIZE=20971520
 
 # ==================== Supabase 配置 ====================
 # 获取方式：Supabase Dashboard -> Settings -> API
@@ -68,6 +68,12 @@ MAX_CHUNK_SIZE=1000
 # 向量检索
 RETRIEVAL_K=3
 RETRIEVAL_SEARCH_TYPE=similarity
+
+# RAG 降级配置
+# 当没有找到相关文档或相似度太低时，是否使用大模型直接回答
+RAG_FALLBACK_ENABLED=true
+# 相似度阈值（0-1之间），低于此值将使用直接回答模式
+RAG_SIMILARITY_THRESHOLD=0.3
 
 # LLM 参数
 LLM_MODEL=MiniMax-M2

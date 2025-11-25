@@ -27,20 +27,22 @@ class PerformanceMonitor:
             success: 是否成功
             details: 额外详情
         """
-        status = "✅" if success else "❌"
-        duration_ms = duration * 1000
-        
-        log_msg = f"[性能监控] {status} {service_name} | {operation} | {duration_ms:.2f}ms"
-        if details:
-            log_msg += f" | {details}"
-        
-        # 根据耗时选择日志级别
-        if duration > 5.0:
-            logger.warning(log_msg)
-        elif duration > 2.0:
-            logger.info(log_msg)
-        else:
-            logger.debug(log_msg)
+        # 性能监控日志已注释
+        # status = "✅" if success else "❌"
+        # duration_ms = duration * 1000
+        # 
+        # log_msg = f"[性能监控] {status} {service_name} | {operation} | {duration_ms:.2f}ms"
+        # if details:
+        #     log_msg += f" | {details}"
+        # 
+        # # 根据耗时选择日志级别
+        # if duration > 5.0:
+        #     logger.warning(log_msg)
+        # elif duration > 2.0:
+        #     logger.info(log_msg)
+        # else:
+        #     logger.debug(log_msg)
+        pass
     
     @staticmethod
     def monitor_function(service_name: str, operation_name: Optional[str] = None):

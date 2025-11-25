@@ -70,6 +70,11 @@ class DocumentService:
         
         # 创建文档记录
         try:
+            # 动态生成 collection 名称（不需要调用 vector_service）
+            vector_collection = f"user_{user_id}_docs"
+            
+            logger.info(f"[文档上传] 用户 {user_id} 上传文件: {uploaded_file.name}, 大小: {format_file_size(file_size)}")
+            
             doc_id = self.doc_dao.create_document(
                 user_id=user_id,
                 filename=safe_filename,
@@ -77,22 +82,26 @@ class DocumentService:
                 filepath=filepath,
                 file_size=file_size,
                 file_type=file_ext,
-                vector_collection=self.vector_service.get_collection_name(user_id)
+                vector_collection=vector_collection
             )
             
             # 异步处理文档（解析、分块、向量化）
             success, message = self._process_document(user_id, doc_id, filepath, file_ext)
             
             if success:
+                chunk_count = int(message)
+                logger.info(f"[文档上传] 文件 {uploaded_file.name} 处理成功: 大小={format_file_size(file_size)}, 向量块={chunk_count}")
                 return True, f"文档上传成功！共生成 {message} 个文本块"
             else:
                 # 标记文档为错误状态
                 self.doc_dao.mark_document_error(doc_id, message)
+                logger.error(f"[文档上传] 文件 {uploaded_file.name} 处理失败: {message}")
                 return False, f"文档处理失败：{message}"
         
         except Exception as e:
             # 删除已保存的文件
             delete_file(filepath)
+            logger.error(f"[文档上传] 文件 {uploaded_file.name} 上传失败: {str(e)}")
             return False, f"上传失败：{str(e)}"
     
     def _process_document(self, user_id: int, doc_id: str, filepath: str, file_type: str) -> Tuple[bool, str]:
@@ -176,6 +185,8 @@ class DocumentService:
             if not chunks:
                 return False, "文档内容为空或无法分块"
             
+            logger.info(f"[文档处理] 文档 {doc_id} 分块完成: {len(chunks)} 个文本块")
+            
             # 3. 创建 Document 对象（带元数据）
             documents = []
             for i, chunk in enumerate(chunks):
@@ -190,8 +201,10 @@ class DocumentService:
                 )
                 documents.append(doc)
             
-            # 4. 向量化并存入 Chroma
+            # 4. 向量化并存入向量库
+            logger.info(f"[文档处理] 开始向量化文档 {doc_id}, 共 {len(documents)} 个文本块")
             self.vector_service.add_documents(user_id, documents)
+            logger.info(f"[文档处理] 文档 {doc_id} 向量化完成")
             
             # 5. 更新文档状态
             self.doc_dao.mark_document_active(doc_id, len(chunks))
@@ -203,6 +216,7 @@ class DocumentService:
             return True, str(len(chunks))
         
         except Exception as e:
+            logger.error(f"[文档处理] 文档 {doc_id} 处理失败: {str(e)}")
             return False, str(e)
     
     def get_user_documents(self, user_id: int) -> List:
@@ -366,16 +380,14 @@ class DocumentService:
     def get_user_stats(self, user_id: int) -> dict:
         """获取用户文档统计"""
         try:
-            doc_count = self.doc_dao.get_document_count(user_id)
-            storage_used = self.doc_dao.get_total_storage(user_id)
-            # 优化：从数据库获取块数，比查询向量库快很多
-            vector_count = self.doc_dao.get_total_chunk_count(user_id)
+            # 优化：使用合并查询，3次查询→1次查询
+            stats = self.doc_dao.get_user_stats_combined(user_id)
             
             return {
-                'document_count': doc_count,
-                'storage_used': storage_used,
-                'storage_used_formatted': format_file_size(storage_used),
-                'vector_count': vector_count
+                'document_count': stats['document_count'],
+                'storage_used': stats['storage_used'],
+                'storage_used_formatted': format_file_size(stats['storage_used']),
+                'vector_count': stats['vector_count']
             }
         except ConnectionError as e:
             # 数据库连接失败，返回默认值并抛出异常供 UI 层处理

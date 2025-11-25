@@ -1,16 +1,15 @@
 [server]
 headless = true
 port = 8501
-# enableCORS 会根据 enableXsrfProtection 自动设置，无需手动配置
+enableCORS = false
 enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false
-serverAddress = "localhost"
 
 [theme]
-primaryColor = "#1976D2"
-backgroundColor = "#121212"
-secondaryBackgroundColor = "#1E1E1E"
-textColor = "#FFFFFF"
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
 font = "sans serif"

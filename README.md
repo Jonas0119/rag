@@ -1989,7 +1989,7 @@ def get_document(doc_id: str, user_id: int):
 
 ```python
 ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.md', '.docx'}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 
 def validate_file(file):
     # 检查文件扩展名
@@ -2558,3 +2558,1433 @@ show_db_error_ui 显示友好提示
 **最后更新：2025-01-23**
 
 **版本：1.0.0**
+
+
+---
+
+## 🚀 Deployment Checklist
+
+## Streamlit Cloud 部署检查清单
+
+### ✅ 部署前准备
+
+#### 1. 文件准备
+
+- [ ] **生成 requirements.txt**
+  ```bash
+  poetry export -f requirements.txt --output requirements.txt --without-hashes
+  ```
+  如果 `poetry export` 不可用，需要手动从 `pyproject.toml` 提取依赖
+
+- [ ] **创建 .streamlit/config.toml**
+  ```bash
+  mkdir -p .streamlit
+  # 复制 STREAMLIT_CLOUD_DEPLOYMENT.md 中的配置内容
+  ```
+
+- [ ] **更新 .gitignore**
+  确保包含：
+  ```
+  .env
+  .streamlit/secrets.toml
+  data/
+  logs/
+  __pycache__/
+  *.pyc
+  ```
+
+- [ ] **验证代码**
+  - [ ] 确保所有模式设置为 `cloud`（通过环境变量）
+  - [ ] 确保没有硬编码的本地文件路径
+  - [ ] 确保日志配置使用 `stream=sys.stdout`（已确认 ✅）
+
+#### 2. 环境变量准备
+
+准备以下环境变量（将在 Streamlit Cloud Secrets 中配置）：
+
+##### 核心配置
+- [ ] `ANTHROPIC_API_KEY`
+- [ ] `ANTHROPIC_BASE_URL`
+- [ ] `STORAGE_MODE=cloud`
+- [ ] `VECTOR_DB_MODE=cloud`
+- [ ] `DATABASE_MODE=cloud`
+
+##### Supabase 配置
+- [ ] `SUPABASE_URL`
+- [ ] `SUPABASE_KEY`
+- [ ] `SUPABASE_SERVICE_KEY`
+- [ ] `SUPABASE_STORAGE_BUCKET`
+- [ ] `DATABASE_URL`
+
+##### Pinecone 配置
+- [ ] `PINECONE_API_KEY`
+- [ ] `PINECONE_ENVIRONMENT`
+- [ ] `PINECONE_INDEX_NAME`
+
+##### 认证配置
+- [ ] `AUTH_COOKIE_NAME`
+- [ ] `AUTH_COOKIE_KEY`（32位随机密钥）
+- [ ] `AUTH_COOKIE_EXPIRY_DAYS`
+- [ ] `MIN_PASSWORD_LENGTH`
+
+##### RAG 配置
+- [ ] `EMBEDDING_MODEL`
+- [ ] `EMBEDDING_DEVICE`
+- [ ] `NORMALIZE_EMBEDDINGS`
+- [ ] `CHUNK_SIZE`
+- [ ] `CHUNK_OVERLAP`
+- [ ] `RETRIEVAL_K`
+- [ ] `LLM_MODEL`
+- [ ] `LLM_TEMPERATURE`
+- [ ] `LLM_MAX_TOKENS`
+
+#### 3. Git 提交
+
+- [ ] 添加新文件到 Git
+  ```bash
+  git add requirements.txt .streamlit/config.toml .gitignore
+  ```
+
+- [ ] 提交更改
+  ```bash
+  git commit -m "准备 Streamlit Cloud 部署：添加 requirements.txt 和 Streamlit 配置"
+  ```
+
+- [ ] 推送到远程仓库
+  ```bash
+  git push origin main
+  ```
+
+---
+
+### 🚀 Streamlit Cloud 部署
+
+#### 步骤 1：创建应用
+
+- [ ] 访问 [share.streamlit.io](https://share.streamlit.io)
+- [ ] 登录 GitHub 账号
+- [ ] 点击 "New app"
+- [ ] 选择仓库：`your-username/rag`
+- [ ] 选择分支：`main`
+- [ ] 主文件路径：`app.py`
+- [ ] 应用 URL：自定义（如 `rag-system`）
+
+#### 步骤 2：配置 Secrets
+
+- [ ] 点击 "Advanced settings"
+- [ ] 在 "Secrets" 区域，粘贴所有环境变量（TOML 格式）
+- [ ] 参考 `STREAMLIT_CLOUD_DEPLOYMENT.md` 中的格式
+
+#### 步骤 3：部署
+
+- [ ] 点击 "Deploy"
+- [ ] 等待构建完成（2-5 分钟）
+- [ ] 检查构建日志，确认无错误
+
+---
+
+### ✅ 部署后验证
+
+#### 功能测试
+
+- [ ] **用户认证**
+  - [ ] 用户注册
+  - [ ] 用户登录
+  - [ ] 自动登录（Cookie）
+
+- [ ] **文档管理**
+  - [ ] 文档上传（PDF/Word/TXT）
+  - [ ] 文档列表显示
+  - [ ] 文档删除
+  - [ ] 文档预览
+
+- [ ] **向量检索**
+  - [ ] 文档上传后向量化成功
+  - [ ] 向量检索功能正常
+  - [ ] 多用户数据隔离正确
+
+- [ ] **智能问答**
+  - [ ] 创建新会话
+  - [ ] 发送消息
+  - [ ] 接收 AI 回复
+  - [ ] 显示检索到的文档片段
+  - [ ] 会话历史保存
+
+- [ ] **数据库操作**
+  - [ ] 用户数据保存到 PostgreSQL
+  - [ ] 会话数据保存
+  - [ ] 消息数据保存
+  - [ ] 文档元数据保存
+
+#### 性能检查
+
+- [ ] 首次加载时间（Embedding 模型加载）
+- [ ] 数据库查询响应时间
+- [ ] 向量检索响应时间
+- [ ] 文件上传速度
+
+#### 错误检查
+
+- [ ] 查看 Streamlit Cloud 日志
+- [ ] 检查是否有错误或警告
+- [ ] 确认所有环境变量已正确加载
+
+---
+
+### 🔧 故障排查
+
+如果遇到问题，参考 `STREAMLIT_CLOUD_DEPLOYMENT.md` 中的故障排查章节。
+
+#### 常见问题
+
+- [ ] **依赖安装失败** → 检查 `requirements.txt` 格式
+- [ ] **环境变量未加载** → 检查 Secrets 配置和 TOML 格式
+- [ ] **数据库连接失败** → 检查 `DATABASE_URL` 和 Supabase 设置
+- [ ] **文件上传失败** → 检查 Supabase Storage 配置
+- [ ] **向量检索失败** → 检查 Pinecone 配置和 Index 名称
+
+---
+
+### 📝 部署完成确认
+
+- [ ] 所有功能测试通过
+- [ ] 性能指标正常
+- [ ] 无错误日志
+- [ ] 应用 URL 可正常访问
+- [ ] 多用户测试通过
+
+---
+
+**部署日期：** ___________  
+**部署人员：** ___________  
+**应用 URL：** ___________  
+
+---
+
+### 📚 参考文档
+
+- 详细部署方案：`STREAMLIT_CLOUD_DEPLOYMENT.md`
+- 项目 README：`README.md`
+- 环境变量模板：`config_template.txt`
+
+
+
+---
+
+## 📖 Deployment Guide
+
+## 本地更新和部署指南
+
+### 📋 本地更新依赖
+
+#### 方法 1：使用 Poetry（推荐）
+
+如果你使用 Poetry 管理依赖：
+
+```bash
+## 1. 更新 pyproject.toml 中的依赖（已完成）
+## pinecone-client 已改为 pinecone
+
+## 2. 更新 Poetry 锁文件和虚拟环境
+poetry update pinecone
+
+## 3. 验证依赖是否正确安装
+poetry show pinecone
+```
+
+#### 方法 2：使用 pip（如果不用 Poetry）
+
+```bash
+## 1. 激活虚拟环境（如果有）
+source venv/bin/activate  # Linux/Mac
+## 或
+venv\Scripts\activate  # Windows
+
+## 2. 卸载旧包
+pip uninstall pinecone-client -y
+
+## 3. 安装新包
+pip install "pinecone>=6.0.0,<7.0.0"
+
+## 4. 验证安装
+pip show pinecone
+```
+
+#### 方法 3：从 requirements.txt 安装
+
+```bash
+## 1. 激活虚拟环境（如果有）
+source venv/bin/activate  # Linux/Mac
+
+## 2. 卸载旧包
+pip uninstall pinecone-client -y
+
+## 3. 从 requirements.txt 安装所有依赖
+pip install -r requirements.txt
+
+## 4. 验证
+pip list | grep pinecone
+```
+
+### 🧪 本地测试
+
+在部署到 Streamlit Cloud 之前，建议先在本地测试：
+
+```bash
+## 1. 确保所有依赖已更新
+poetry install  # 或 pip install -r requirements.txt
+
+## 2. 运行应用
+poetry run streamlit run app.py
+## 或
+streamlit run app.py
+
+## 3. 检查应用是否正常启动
+## 访问 http://localhost:8501
+## 确认没有 Pinecone 相关的错误
+```
+
+### 🚀 部署到 Streamlit Cloud
+
+#### 步骤 1：提交代码到 Git
+
+```bash
+## 1. 检查更改状态
+git status
+
+## 2. 添加修改的文件
+git add requirements.txt pyproject.toml STREAMLIT_CLOUD_ISSUE_FIX.md
+
+## 3. 提交更改
+git commit -m "修复 Pinecone 包冲突：将 pinecone-client 替换为 pinecone"
+
+## 4. 推送到远程仓库
+git push origin main
+```
+
+#### 步骤 2：Streamlit Cloud 自动部署
+
+Streamlit Cloud 会自动检测到代码更改并触发重新部署：
+
+1. **等待自动部署**（通常 1-2 分钟）
+   - 访问你的 Streamlit Cloud 应用页面
+   - 查看右上角的部署状态
+
+2. **检查部署日志**
+   - 点击应用右上角的 "Manage app"
+   - 查看 "Logs" 标签页
+   - 确认没有错误信息
+
+3. **验证应用运行**
+   - 访问应用 URL
+   - 确认应用正常启动
+   - 测试基本功能
+
+#### 步骤 3：手动触发重新部署（如果需要）
+
+如果自动部署没有触发，可以手动触发：
+
+1. 访问 [Streamlit Cloud Dashboard](https://share.streamlit.io)
+2. 找到你的应用
+3. 点击 "⋮" (三个点) 菜单
+4. 选择 "Reboot app" 或 "Redeploy"
+
+### 🔍 验证部署
+
+#### 检查清单
+
+- [ ] 代码已推送到 Git 远程仓库
+- [ ] Streamlit Cloud 显示 "Deploying" 或 "Running" 状态
+- [ ] 部署日志中没有错误信息
+- [ ] 应用可以正常访问
+- [ ] 登录页面正常显示
+- [ ] 没有 Pinecone 相关的错误
+
+#### 常见问题排查
+
+##### 问题 1：部署失败
+
+**检查**：
+- 查看 Streamlit Cloud 日志中的错误信息
+- 确认 `requirements.txt` 格式正确
+- 确认所有依赖版本兼容
+
+**解决**：
+```bash
+## 检查 requirements.txt 格式
+cat requirements.txt
+
+## 验证 Python 版本兼容性
+## Streamlit Cloud 使用 Python 3.13.9
+```
+
+##### 问题 2：应用启动但功能异常
+
+**检查**：
+- 查看应用日志中的错误
+- 确认环境变量已正确配置
+- 检查云服务连接（Supabase、Pinecone）
+
+**解决**：
+- 检查 Streamlit Cloud Secrets 配置
+- 确认所有必需的环境变量都已设置
+
+##### 问题 3：依赖安装失败
+
+**检查**：
+- 查看部署日志中的 pip 安装错误
+- 确认依赖版本兼容性
+
+**解决**：
+```bash
+## 本地测试依赖安装
+pip install -r requirements.txt
+
+## 如果本地成功但 Cloud 失败，检查 Python 版本差异
+```
+
+### 📝 快速部署命令
+
+#### 一键部署脚本
+
+创建 `deploy.sh` 文件：
+
+```bash
+#!/bin/bash
+## 快速部署脚本
+
+echo "🔍 检查 Git 状态..."
+git status
+
+echo "📦 更新依赖..."
+## 如果使用 Poetry
+poetry update pinecone
+## 或使用 pip
+## pip install -r requirements.txt
+
+echo "✅ 测试应用..."
+poetry run streamlit run app.py &
+STREAMLIT_PID=$!
+sleep 5
+kill $STREAMLIT_PID
+
+echo "📤 提交代码..."
+git add requirements.txt pyproject.toml
+git commit -m "修复 Pinecone 包冲突"
+git push origin main
+
+echo "🚀 代码已推送，Streamlit Cloud 将自动部署"
+echo "⏳ 请等待 2-5 分钟，然后检查应用状态"
+```
+
+使用：
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+### 🎯 部署后验证
+
+部署完成后，执行以下验证：
+
+1. **应用启动验证**
+   - ✅ 应用可以访问
+   - ✅ 没有启动错误
+   - ✅ 登录页面正常显示
+
+2. **功能验证**
+   - ✅ 用户注册/登录功能
+   - ✅ 文档上传功能（如果使用 Supabase Storage）
+   - ✅ 向量检索功能（如果使用 Pinecone）
+   - ✅ 数据库操作（如果使用 PostgreSQL）
+
+3. **性能验证**
+   - ✅ 应用响应速度正常
+   - ✅ 没有超时错误
+   - ✅ 资源使用合理
+
+### 📚 相关文档
+
+- **详细部署方案**：`STREAMLIT_CLOUD_DEPLOYMENT.md`
+- **部署检查清单**：`DEPLOYMENT_CHECKLIST.md`
+- **问题修复记录**：`STREAMLIT_CLOUD_ISSUE_FIX.md`
+
+---
+
+**最后更新**：2025-11-24
+
+
+
+---
+
+## ☁️ Streamlit Cloud Deployment
+
+## Streamlit Cloud 部署方案
+
+### 📋 概述
+
+本文档详细说明如何将 RAG 智能问答系统部署到 Streamlit Cloud。由于 Streamlit Cloud 是无状态的云服务，需要确保所有数据存储都使用云服务，不能依赖本地文件系统。
+
+---
+
+### ✅ 部署前检查清单
+
+#### 1. 云服务配置确认
+
+确保以下云服务已正确配置并可用：
+
+- [x] **Supabase Storage**：文件存储服务已配置
+- [x] **Supabase PostgreSQL**：数据库服务已配置
+- [x] **Pinecone**：向量库服务已配置
+- [x] **MiniMax API**：LLM API 已配置
+
+#### 2. 环境变量准备
+
+准备所有必需的环境变量（将在 Streamlit Cloud Secrets 中配置）：
+
+##### 必需变量（所有模式）
+
+```bash
+## API 配置
+ANTHROPIC_API_KEY=sk-xxx
+ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
+
+## 模式切换（必须全部设置为 cloud）
+STORAGE_MODE=cloud
+VECTOR_DB_MODE=cloud
+DATABASE_MODE=cloud
+
+## Supabase 配置
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_KEY=sb_publishable_xxx
+SUPABASE_SERVICE_KEY=sb_secret_xxx
+SUPABASE_STORAGE_BUCKET=rag
+DATABASE_URL=postgresql://postgres:xxx@db.xxx.supabase.co:5432/postgres
+
+## Pinecone 配置
+PINECONE_API_KEY=xxx-xxx-xxx
+PINECONE_ENVIRONMENT=us-east-1
+PINECONE_INDEX_NAME=rag-system
+
+## 认证配置
+AUTH_COOKIE_NAME=rag_auth_token
+AUTH_COOKIE_KEY=xxx（32位随机密钥）
+AUTH_COOKIE_EXPIRY_DAYS=30
+MIN_PASSWORD_LENGTH=6
+
+## RAG 配置
+EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+EMBEDDING_DEVICE=cpu
+NORMALIZE_EMBEDDINGS=true
+CHUNK_SIZE=800
+CHUNK_OVERLAP=100
+RETRIEVAL_K=3
+LLM_MODEL=MiniMax-M2
+LLM_TEMPERATURE=0
+LLM_MAX_TOKENS=2000
+```
+
+---
+
+### 🔧 需要创建/修改的文件
+
+#### 1. `requirements.txt` ⭐ **必需**
+
+Streamlit Cloud 需要 `requirements.txt` 文件来安装依赖。虽然项目使用 Poetry，但需要生成 `requirements.txt`。
+
+**生成方法：**
+
+```bash
+## 方法1：使用 poetry export（推荐）
+poetry export -f requirements.txt --output requirements.txt --without-hashes
+
+## 方法2：手动创建（如果 poetry export 不可用）
+## 从 pyproject.toml 提取依赖并转换为 requirements.txt 格式
+```
+
+**文件位置：** 项目根目录 `/requirements.txt`
+
+#### 2. `.streamlit/config.toml` ⭐ **推荐**
+
+创建 Streamlit 配置文件，优化 Cloud 部署设置。
+
+**文件位置：** `.streamlit/config.toml`
+
+**配置内容：**
+
+```toml
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[theme]
+primaryColor = "#1976D2"
+backgroundColor = "#121212"
+secondaryBackgroundColor = "#1E1E1E"
+textColor = "#FFFFFF"
+font = "sans serif"
+```
+
+#### 3. `.streamlit/secrets.toml` ⚠️ **不要提交到 Git**
+
+此文件用于本地开发，**不要提交到 Git**。Streamlit Cloud 使用 Web UI 配置 Secrets。
+
+**文件位置：** `.streamlit/secrets.toml`（添加到 `.gitignore`）
+
+**本地开发使用：**
+
+```toml
+## 本地开发时使用，不要提交到 Git
+ANTHROPIC_API_KEY = "sk-xxx"
+STORAGE_MODE = "cloud"
+VECTOR_DB_MODE = "cloud"
+DATABASE_MODE = "cloud"
+## ... 其他环境变量
+```
+
+#### 4. `.gitignore` 更新
+
+确保以下文件/目录不被提交：
+
+```
+## 环境变量和密钥
+.env
+.streamlit/secrets.toml
+
+## 本地数据目录（Cloud 部署不需要）
+data/
+logs/
+
+## Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+## Poetry
+poetry.lock  # 可选：如果使用 requirements.txt，可以不提交
+```
+
+#### 5. 代码修改点
+
+##### 5.1 日志文件路径处理
+
+**问题：** Streamlit Cloud 可能没有写入权限，或路径不存在。
+
+**解决方案：** 修改日志配置，使用临时目录或禁用文件日志。
+
+**需要检查的文件：**
+- `utils/config.py`：确保 `LOG_FILE` 使用临时目录或禁用
+- 所有使用 `logs/` 目录的地方
+
+**建议修改：**
+
+```python
+## utils/config.py
+import tempfile
+import os
+
+## 如果 LOG_FILE 指向 logs/ 目录，改为临时目录或禁用
+if os.getenv("LOG_FILE", "").startswith("logs/"):
+    # Streamlit Cloud 环境，使用临时目录或禁用文件日志
+    LOG_FILE = os.path.join(tempfile.gettempdir(), "app.log") if os.getenv("ENABLE_FILE_LOG", "false").lower() == "true" else None
+else:
+    LOG_FILE = os.getenv("LOG_FILE", None)
+```
+
+##### 5.2 确保不使用本地文件系统
+
+**检查点：**
+- ✅ `STORAGE_MODE=cloud`：使用 Supabase Storage
+- ✅ `VECTOR_DB_MODE=cloud`：使用 Pinecone
+- ✅ `DATABASE_MODE=cloud`：使用 Supabase PostgreSQL
+
+**验证方法：**
+- 确保代码中没有硬编码的 `data/` 路径访问
+- 确保所有文件操作都通过服务层（`document_service.py`、`vector_store_service.py`）
+
+##### 5.3 环境变量加载优化
+
+**当前实现：** `utils/config.py` 使用 `load_dotenv()` 加载 `.env` 文件
+
+**Streamlit Cloud：** 环境变量通过 Secrets 配置，不需要 `.env` 文件
+
+**建议：** 保持现有实现，`load_dotenv()` 在 Streamlit Cloud 中会静默失败（文件不存在），不影响从环境变量读取。
+
+---
+
+### 🚀 部署步骤
+
+#### 步骤 1：准备代码
+
+1. **生成 requirements.txt**
+
+```bash
+cd /Users/jonas/tech/projects/rag
+poetry export -f requirements.txt --output requirements.txt --without-hashes
+```
+
+2. **创建 .streamlit/config.toml**
+
+```bash
+mkdir -p .streamlit
+## 创建配置文件（见上方配置内容）
+```
+
+3. **更新 .gitignore**
+
+确保 `.env`、`.streamlit/secrets.toml`、`data/`、`logs/` 已添加到 `.gitignore`
+
+4. **提交代码到 Git**
+
+```bash
+git add requirements.txt .streamlit/config.toml .gitignore
+git commit -m "准备 Streamlit Cloud 部署"
+git push origin main
+```
+
+#### 步骤 2：在 Streamlit Cloud 创建应用
+
+1. **访问 Streamlit Cloud**
+   - 登录 [share.streamlit.io](https://share.streamlit.io)
+   - 点击 "New app"
+
+2. **配置应用**
+   - **Repository**：选择你的 GitHub 仓库
+   - **Branch**：`main`
+   - **Main file path**：`app.py`
+   - **App URL**：自定义（如 `rag-system`）
+
+3. **配置 Secrets**
+   - 点击 "Advanced settings"
+   - 在 "Secrets" 区域，添加所有环境变量
+   - **格式：** TOML 格式
+
+```toml
+ANTHROPIC_API_KEY = "sk-xxx"
+ANTHROPIC_BASE_URL = "https://api.minimaxi.com/anthropic"
+STORAGE_MODE = "cloud"
+VECTOR_DB_MODE = "cloud"
+DATABASE_MODE = "cloud"
+SUPABASE_URL = "https://xxx.supabase.co"
+SUPABASE_KEY = "sb_publishable_xxx"
+SUPABASE_SERVICE_KEY = "sb_secret_xxx"
+SUPABASE_STORAGE_BUCKET = "rag"
+DATABASE_URL = "postgresql://postgres:xxx@db.xxx.supabase.co:5432/postgres"
+PINECONE_API_KEY = "xxx-xxx-xxx"
+PINECONE_ENVIRONMENT = "us-east-1"
+PINECONE_INDEX_NAME = "rag-system"
+AUTH_COOKIE_NAME = "rag_auth_token"
+AUTH_COOKIE_KEY = "xxx"
+AUTH_COOKIE_EXPIRY_DAYS = "30"
+MIN_PASSWORD_LENGTH = "6"
+EMBEDDING_MODEL = "BAAI/bge-large-zh-v1.5"
+EMBEDDING_DEVICE = "cpu"
+NORMALIZE_EMBEDDINGS = "true"
+CHUNK_SIZE = "800"
+CHUNK_OVERLAP = "100"
+RETRIEVAL_K = "3"
+LLM_MODEL = "MiniMax-M2"
+LLM_TEMPERATURE = "0"
+LLM_MAX_TOKENS = "2000"
+```
+
+4. **部署应用**
+   - 点击 "Deploy"
+   - 等待构建完成（通常 2-5 分钟）
+
+#### 步骤 3：验证部署
+
+1. **检查构建日志**
+   - 查看是否有依赖安装错误
+   - 确认所有环境变量已加载
+
+2. **功能测试**
+   - ✅ 用户注册/登录
+   - ✅ 文档上传（验证 Supabase Storage）
+   - ✅ 向量检索（验证 Pinecone）
+   - ✅ 数据库操作（验证 PostgreSQL）
+   - ✅ 智能问答功能
+
+3. **性能监控**
+   - 检查首次加载时间（Embedding 模型加载）
+   - 检查数据库连接性能
+   - 检查向量检索响应时间
+
+---
+
+### ⚠️ 注意事项
+
+#### 1. 文件大小限制
+
+- **Streamlit Cloud 限制：** 单个文件最大 200MB
+- **Supabase Storage：** 根据你的计划限制（免费版通常 1GB）
+- **建议：** 在文档上传时检查文件大小
+
+#### 2. 冷启动时间
+
+- **首次启动：** Embedding 模型加载可能需要 30-60 秒
+- **优化建议：** 使用 `@st.cache_resource` 缓存模型（已实现）
+
+#### 3. 数据库连接
+
+- **连接池：** 考虑实现连接池优化（见 README.md 中的优化方案）
+- **超时设置：** 确保数据库连接有合理的超时时间
+
+#### 4. 环境变量安全
+
+- ✅ **不要**在代码中硬编码密钥
+- ✅ **不要**将 `.env` 文件提交到 Git
+- ✅ **使用** Streamlit Cloud Secrets 管理敏感信息
+
+#### 5. 日志处理
+
+- Streamlit Cloud 的日志会显示在 Web UI
+- 文件日志可能无法写入，建议使用控制台日志
+
+---
+
+### 🔍 故障排查
+
+#### 问题 1：依赖安装失败
+
+**症状：** 构建日志显示 `pip install` 错误
+
+**解决方案：**
+- 检查 `requirements.txt` 格式是否正确
+- 确认所有依赖版本兼容
+- 尝试固定版本号（如 `streamlit==1.51.0`）
+
+#### 问题 2：环境变量未加载
+
+**症状：** 应用启动时报错 `KeyError` 或配置为空
+
+**解决方案：**
+- 检查 Streamlit Cloud Secrets 配置
+- 确认变量名拼写正确
+- 检查 TOML 格式是否正确
+
+#### 问题 3：数据库连接失败
+
+**症状：** 数据库操作报错
+
+**解决方案：**
+- 检查 `DATABASE_URL` 格式
+- 确认 Supabase PostgreSQL 允许外部连接
+- 检查防火墙设置
+
+#### 问题 4：文件上传失败
+
+**症状：** 文档上传后无法保存
+
+**解决方案：**
+- 检查 Supabase Storage Bucket 配置
+- 确认 `SUPABASE_SERVICE_KEY` 有写入权限
+- 检查文件大小是否超限
+
+#### 问题 5：向量检索失败
+
+**症状：** 检索功能报错
+
+**解决方案：**
+- 检查 Pinecone API Key 和 Environment
+- 确认 Index 名称正确
+- 检查 Index 是否已创建
+
+---
+
+### 📊 部署后优化建议
+
+#### 1. 性能优化
+
+- [ ] 实现数据库连接池（见 README.md）
+- [ ] 优化 Embedding 模型加载（使用更小的模型或预加载）
+- [ ] 实现向量检索缓存
+
+#### 2. 监控和日志
+
+- [ ] 集成错误追踪服务（如 Sentry）
+- [ ] 添加性能监控
+- [ ] 设置告警（数据库连接失败、API 调用失败等）
+
+#### 3. 安全性
+
+- [ ] 启用 HTTPS（Streamlit Cloud 默认支持）
+- [ ] 实现速率限制（防止滥用）
+- [ ] 定期轮换 API 密钥
+
+---
+
+### 📝 总结
+
+#### 必需文件清单
+
+1. ✅ `requirements.txt` - 依赖清单
+2. ✅ `.streamlit/config.toml` - Streamlit 配置
+3. ✅ `.gitignore` - 忽略敏感文件
+4. ✅ `app.py` - 主应用入口（已有）
+
+#### 必需配置
+
+1. ✅ 所有模式设置为 `cloud`
+2. ✅ 所有云服务环境变量配置
+3. ✅ Streamlit Cloud Secrets 配置
+
+#### 代码修改点
+
+1. ⚠️ 日志文件路径处理（可选，建议优化）
+2. ✅ 确保不使用本地文件系统（已通过环境变量控制）
+
+---
+
+### 🎯 下一步行动
+
+1. **生成 requirements.txt**
+2. **创建 .streamlit/config.toml**
+3. **更新 .gitignore**
+4. **测试本地环境变量加载**
+5. **提交代码到 Git**
+6. **在 Streamlit Cloud 创建应用并配置 Secrets**
+7. **部署并验证**
+
+---
+
+**最后更新：** 2025-01-XX  
+**文档版本：** 1.0
+
+
+
+---
+
+## 🔧 Troubleshooting & Fixes
+
+
+---
+
+### IPv6 连接问题修复
+
+#### 🔍 问题分析
+
+##### 错误信息
+
+```
+connection to server at "db.wldswlgrbjosaedbxiqp.supabase.co" 
+(2600:1f16:1cd0:331e:a636:d013:b754:f654), port 5432 failed: 
+Cannot assign requested address
+```
+
+##### 根本原因
+
+1. **网络环境差异**：
+   - **本地环境**：支持 IPv6，可以正常连接
+   - **Streamlit Cloud**：不支持 IPv6 或 IPv6 连接有问题
+
+2. **DNS 解析问题**：
+   - Supabase 主机名 `db.wldswlgrbjosaedbxiqp.supabase.co` 解析时返回了 IPv6 地址
+   - psycopg2 尝试使用 IPv6 地址连接，但 Streamlit Cloud 无法使用
+
+3. **连接方式**：
+   - psycopg2 在连接时会调用 `socket.getaddrinfo()` 解析主机名
+   - 如果 DNS 返回 IPv6 地址，psycopg2 会优先使用 IPv6
+
+#### ✅ 修复方案
+
+##### 核心思路
+
+**强制使用 IPv4**：拦截 `socket.getaddrinfo()` 函数，过滤掉 IPv6 地址，只返回 IPv4 地址。
+
+##### 实现方法
+
+1. **保存原始的 `getaddrinfo` 函数**
+   ```python
+   _original_getaddrinfo = socket.getaddrinfo
+   ```
+
+2. **创建 IPv4 过滤函数**
+   ```python
+   def _ipv4_getaddrinfo(*args, **kwargs):
+       """强制使用 IPv4 的 getaddrinfo"""
+       responses = _original_getaddrinfo(*args, **kwargs)
+       # 过滤掉 IPv6 地址，只返回 IPv4
+       return [r for r in responses if r[0] == socket.AF_INET]
+   ```
+
+3. **替换全局 `getaddrinfo`**
+   ```python
+   socket.getaddrinfo = _ipv4_getaddrinfo
+   ```
+
+##### 工作原理
+
+1. **DNS 解析拦截**：
+   - 当 psycopg2 调用 `socket.getaddrinfo()` 解析主机名时
+   - 我们的拦截函数会先调用原始的 `getaddrinfo()`
+   - 然后过滤掉所有 IPv6 地址（`socket.AF_INET6`）
+   - 只返回 IPv4 地址（`socket.AF_INET`）
+
+2. **连接流程**：
+   ```
+   psycopg2.connect(DATABASE_URL)
+     ↓
+   解析主机名：db.wldswlgrbjosaedbxiqp.supabase.co
+     ↓
+   socket.getaddrinfo() [被拦截]
+     ↓
+   返回 IPv4 地址列表（过滤掉 IPv6）
+     ↓
+   psycopg2 使用 IPv4 地址连接
+     ↓
+   连接成功 ✅
+   ```
+
+#### 📝 代码修改
+
+##### 修改位置
+
+**文件**：`database/db_manager.py`
+
+**修改内容**：
+1. 导入 `socket` 模块
+2. 添加 IPv4 强制逻辑（在模块级别执行）
+3. 确保在所有连接之前生效
+
+##### 关键代码
+
+```python
+### 强制使用 IPv4（解决 Streamlit Cloud IPv6 连接问题）
+_original_getaddrinfo = socket.getaddrinfo
+
+def _ipv4_getaddrinfo(*args, **kwargs):
+    """强制使用 IPv4 的 getaddrinfo"""
+    responses = _original_getaddrinfo(*args, **kwargs)
+    # 过滤掉 IPv6 地址，只返回 IPv4
+    return [r for r in responses if r[0] == socket.AF_INET]
+
+### 在所有情况下强制使用 IPv4
+socket.getaddrinfo = _ipv4_getaddrinfo
+```
+
+#### 🎯 优势
+
+1. **透明修复**：不需要修改 DATABASE_URL
+2. **向后兼容**：本地环境仍然可以正常工作（IPv4 也支持）
+3. **全局生效**：所有 PostgreSQL 连接都自动使用 IPv4
+4. **不影响其他功能**：只影响 DNS 解析，不影响其他 socket 操作
+
+#### ⚠️ 注意事项
+
+1. **影响范围**：
+   - 这个修改会影响所有使用 `socket.getaddrinfo()` 的代码
+   - 但通常不会造成问题，因为大多数服务都同时支持 IPv4 和 IPv6
+
+2. **本地开发**：
+   - 本地环境通常同时支持 IPv4 和 IPv6
+   - 强制使用 IPv4 不会影响本地开发
+
+3. **其他服务**：
+   - 如果应用中有其他需要 IPv6 的服务，可能需要特殊处理
+   - 但通常 Streamlit Cloud 上的服务都使用 IPv4
+
+#### 🚀 部署步骤
+
+1. **提交代码**
+   ```bash
+   git add database/db_manager.py
+   git commit -m "修复 IPv6 连接问题：强制使用 IPv4"
+   git push origin main
+   ```
+
+2. **验证部署**
+   - 等待 Streamlit Cloud 自动重新部署
+   - 检查应用日志确认连接成功
+   - 测试数据库操作功能
+
+#### 🔍 验证方法
+
+部署后，检查日志中应该看到：
+- ✅ 不再有 IPv6 连接错误
+- ✅ PostgreSQL 连接成功
+- ✅ 数据库操作正常
+
+如果仍然有问题，检查：
+1. 代码是否已正确部署
+2. Streamlit Cloud 日志中的详细错误信息
+3. DATABASE_URL 配置是否正确
+
+---
+
+**修复日期**：2025-11-24  
+**问题状态**：✅ 已修复
+
+
+
+---
+
+### PostgreSQL 连接问题修复
+
+#### 🔍 问题分析
+
+##### 错误信息
+
+```
+ConnectionError: 创建 PostgreSQL 连接池失败: connection to server at 
+"db.wldswlgrbjosaedbxiqp.supabase.co" (2600:1f16:1cd0:331e:a636:d013:b754:f654),
+port 5432 failed: Cannot assign requested address
+```
+
+##### 根本原因
+
+1. **IPv6 连接问题**：Supabase PostgreSQL 返回了 IPv6 地址，但 Streamlit Cloud 的网络环境可能不支持 IPv6 连接
+2. **连接池初始化失败**：连接池创建时立即失败，没有降级方案
+3. **缺少连接参数**：没有设置连接超时和 keepalive 参数
+
+#### ✅ 修复方案
+
+##### 1. 添加数据库 URL 规范化方法
+
+新增 `_normalize_database_url()` 方法：
+- 解析数据库连接 URL
+- 添加连接超时和 keepalive 参数
+- 优化连接配置
+
+##### 2. 优化连接池初始化
+
+**改进前**：
+- 连接池创建失败立即抛出异常
+- 没有降级方案
+
+**改进后**：
+- 连接池创建失败时记录警告，但不抛出异常
+- 在 `get_connection()` 中降级到直接连接
+- 减少连接池大小（minconn=1, maxconn=5），适合 Streamlit Cloud 环境
+
+##### 3. 添加连接降级机制
+
+**改进前**：
+- 连接池失败后无法恢复
+
+**改进后**：
+- 连接池失败时自动降级到直接连接
+- 所有连接都使用规范化后的 URL（包含优化参数）
+
+#### 📝 代码修改
+
+##### 主要修改点
+
+1. **新增 `_normalize_database_url()` 方法**
+   - 添加连接超时参数：`connect_timeout=10`
+   - 启用 keepalive：`keepalives=1`
+   - 配置 keepalive 参数
+
+2. **优化 `_init_connection_pool()` 方法**
+   - 连接池创建失败时不抛出异常
+   - 减少连接池大小
+   - 记录警告日志
+
+3. **改进 `get_connection()` 方法**
+   - 使用规范化后的 URL
+   - 添加连接池降级机制
+   - 所有连接都通过规范化 URL
+
+4. **更新 `_init_postgres_database()` 方法**
+   - 使用规范化后的 URL 进行初始化
+
+#### 🔧 连接参数说明
+
+添加的连接参数：
+
+- `connect_timeout=10`：连接超时 10 秒
+- `keepalives=1`：启用 TCP keepalive
+- `keepalives_idle=30`：keepalive idle 时间 30 秒
+- `keepalives_interval=10`：keepalive 间隔 10 秒
+- `keepalives_count=5`：keepalive 重试次数 5 次
+
+#### 🚀 部署步骤
+
+1. **提交代码**
+   ```bash
+   git add database/db_manager.py
+   git commit -m "修复 PostgreSQL 连接问题：添加连接降级和 URL 规范化"
+   git push origin main
+   ```
+
+2. **验证部署**
+   - 等待 Streamlit Cloud 自动重新部署
+   - 检查应用日志确认连接成功
+   - 测试数据库操作功能
+
+#### 📌 注意事项
+
+1. **IPv6 问题**：如果仍然遇到 IPv6 连接问题，可能需要：
+   - 在 Supabase 中配置仅使用 IPv4
+   - 或使用 Supabase 的连接池功能
+
+2. **连接池大小**：已调整为适合 Streamlit Cloud 环境：
+   - `minconn=1`：最小连接数
+   - `maxconn=5`：最大连接数
+
+3. **降级机制**：连接池失败时会自动降级到直接连接，确保应用可以继续运行
+
+#### 🔗 相关资源
+
+- [psycopg2 连接参数文档](https://www.psycopg.org/docs/module.html#psycopg2.connect)
+- [Supabase PostgreSQL 连接指南](https://supabase.com/docs/guides/database/connecting-to-postgres)
+
+---
+
+**修复日期**：2025-11-24  
+**问题状态**：✅ 已修复
+
+
+
+---
+
+### Streamlit Cloud 部署问题修复
+
+#### 🔍 问题分析
+
+##### 错误信息
+
+```
+Exception: The official Pinecone python package has been renamed from `pinecone-client` to `pinecone`. 
+Please remove `pinecone-client` from your project dependencies and add `pinecone` instead.
+```
+
+##### 根本原因
+
+**Pinecone 包冲突**：项目依赖中同时存在已弃用的 `pinecone-client` 和新版本的 `pinecone` 包。
+
+Pinecone 官方在较新版本中将 Python 包从 `pinecone-client` 重命名为 `pinecone`。新版本的 `pinecone` 包在导入时会检测是否安装了 `pinecone-client`，如果检测到会抛出异常，防止两个包同时存在导致的冲突。
+
+##### 错误位置
+
+- **文件**：`requirements.txt` 第 15 行
+- **文件**：`pyproject.toml` 第 36 行
+- **错误触发**：`services/vector_store_service.py` 导入 `pinecone` 时
+
+#### ✅ 修复方案
+
+##### 1. 更新 `requirements.txt`
+
+**修改前：**
+```txt
+pinecone-client>=6.0.0,<7.0.0
+```
+
+**修改后：**
+```txt
+### Pinecone 官方包已重命名：从 pinecone-client 改为 pinecone
+pinecone>=6.0.0,<7.0.0
+```
+
+##### 2. 更新 `pyproject.toml`
+
+**修改前：**
+```toml
+pinecone-client = "^6.0.0"
+```
+
+**修改后：**
+```toml
+### 注意：Pinecone 官方包已重命名，从 pinecone-client 改为 pinecone
+pinecone = "^6.0.0"
+```
+
+#### 📝 验证步骤
+
+1. **提交更改到 Git**
+   ```bash
+   git add requirements.txt pyproject.toml
+   git commit -m "修复 Pinecone 包冲突：将 pinecone-client 替换为 pinecone"
+   git push origin main
+   ```
+
+2. **在 Streamlit Cloud 重新部署**
+   - Streamlit Cloud 会自动检测到代码更改并重新部署
+   - 等待构建完成（通常 2-5 分钟）
+
+3. **验证应用启动**
+   - 检查应用是否正常启动
+   - 确认不再出现 Pinecone 包冲突错误
+
+#### 🔗 相关资源
+
+- [Pinecone Python SDK 迁移指南](https://github.com/pinecone-io/pinecone-python-client)
+- [Pinecone Python SDK 文档](https://docs.pinecone.io/docs/python-client)
+
+#### 📌 注意事项
+
+1. **版本兼容性**：确保 `pinecone>=6.0.0` 与 `langchain-pinecone>=0.2.13` 兼容
+2. **本地开发**：如果本地使用 Poetry，需要运行 `poetry update pinecone` 更新依赖
+3. **环境变量**：确保 Streamlit Cloud Secrets 中配置了正确的 Pinecone 环境变量
+
+---
+
+**修复日期**：2025-11-24  
+**问题状态**：✅ 已修复
+
+
+
+---
+
+## 🔄 Upgrade History
+
+## 项目升级总结 - Streamlit Cloud 部署准备
+
+### ✅ 已完成的升级
+
+#### 1. 创建必需文件
+
+##### ✅ `requirements.txt`
+- **位置**: 项目根目录
+- **内容**: 从 `pyproject.toml` 提取的所有依赖，使用兼容版本范围
+- **用途**: Streamlit Cloud 使用此文件安装依赖
+
+##### ✅ `.streamlit/config.toml`（已更新）
+- **位置**: `.streamlit/config.toml`
+- **更新内容**:
+  - 添加了 `enableCORS` 和 `enableXsrfProtection` 安全配置
+  - 优化了主题配置
+  - 配置了服务器设置
+
+##### ✅ `verify_deployment.py`
+- **位置**: 项目根目录
+- **用途**: 部署前验证脚本，检查所有必需文件和配置
+- **使用方法**: `python3 verify_deployment.py`
+
+#### 2. 代码优化
+
+##### ✅ `utils/config.py` - 环境变量加载优化
+- **改进**: 支持 Streamlit Secrets 自动加载
+- **兼容性**: 
+  - 本地运行：从 `.env` 文件加载
+  - Streamlit Cloud：从 Secrets 自动加载
+  - 优先级：系统环境变量 > .env 文件 > 默认值
+- **关键代码**:
+  ```python
+  load_dotenv(override=False)  # 不覆盖已存在的环境变量
+  _load_streamlit_secrets()    # 延迟加载 Streamlit Secrets
+  ```
+
+##### ✅ 日志配置
+- **状态**: 已确认使用 `stream=sys.stdout`（控制台输出）
+- **兼容性**: ✅ 完全兼容 Streamlit Cloud
+
+#### 3. 配置文件验证
+
+##### ✅ `.gitignore`
+- **已包含**: `.env`, `.streamlit/secrets.toml`, `data/`, `logs/`
+- **状态**: ✅ 配置正确，敏感文件不会被提交
+
+### 📋 部署检查清单
+
+#### 本地开发环境
+
+- [x] `requirements.txt` 已创建
+- [x] `.streamlit/config.toml` 已更新
+- [x] `.gitignore` 配置正确
+- [x] 环境变量加载逻辑已优化
+- [x] 日志配置兼容 Cloud
+- [x] 验证脚本通过所有检查
+
+#### Streamlit Cloud 部署前准备
+
+- [ ] 提交代码到 Git
+  ```bash
+  git add requirements.txt .streamlit/config.toml verify_deployment.py utils/config.py
+  git commit -m "准备 Streamlit Cloud 部署：添加 requirements.txt 和优化配置"
+  git push origin main
+  ```
+
+- [ ] 在 Streamlit Cloud 配置 Secrets
+  - 访问 [share.streamlit.io](https://share.streamlit.io)
+  - 创建新应用
+  - 在 "Secrets" 中配置所有环境变量（参考 `STREAMLIT_CLOUD_DEPLOYMENT.md`）
+
+- [ ] 确保所有模式设置为 `cloud`
+  - `STORAGE_MODE=cloud`
+  - `VECTOR_DB_MODE=cloud`
+  - `DATABASE_MODE=cloud`
+
+### 🔄 兼容性说明
+
+#### 本地运行
+
+项目完全兼容本地运行，使用方式不变：
+
+1. **环境变量**: 从 `.env` 文件加载
+2. **数据存储**: 根据 `STORAGE_MODE`、`VECTOR_DB_MODE`、`DATABASE_MODE` 选择本地或云服务
+3. **日志**: 输出到控制台（`sys.stdout`）
+
+#### Streamlit Cloud 运行
+
+1. **环境变量**: 从 Streamlit Secrets 自动加载（通过 `st.secrets`）
+2. **数据存储**: 必须使用云服务（`STORAGE_MODE=cloud`、`VECTOR_DB_MODE=cloud`、`DATABASE_MODE=cloud`）
+3. **日志**: 输出到 Streamlit Cloud 日志控制台
+
+### 📝 关键改进点
+
+#### 1. 环境变量加载优先级
+
+```
+系统环境变量（Streamlit Secrets）
+    ↓
+.env 文件（本地开发）
+    ↓
+默认值
+```
+
+#### 2. Streamlit Secrets 支持
+
+- 自动检测并加载 `st.secrets`
+- 不覆盖已存在的环境变量
+- 在非 Streamlit 环境中静默失败
+
+#### 3. 向后兼容
+
+- 所有现有功能保持不变
+- 本地开发体验不受影响
+- 可以随时切换本地/云服务模式
+
+### 🚀 下一步
+
+1. **测试本地运行**
+   ```bash
+   streamlit run app.py
+   ```
+
+2. **运行验证脚本**
+   ```bash
+   python3 verify_deployment.py
+   ```
+
+3. **提交代码**
+   ```bash
+   git add .
+   git commit -m "准备 Streamlit Cloud 部署"
+   git push origin main
+   ```
+
+4. **部署到 Streamlit Cloud**
+   - 参考 `STREAMLIT_CLOUD_DEPLOYMENT.md` 详细步骤
+   - 参考 `DEPLOYMENT_CHECKLIST.md` 检查清单
+
+### 📚 相关文档
+
+- **详细部署方案**: `STREAMLIT_CLOUD_DEPLOYMENT.md`
+- **部署检查清单**: `DEPLOYMENT_CHECKLIST.md`
+- **环境变量模板**: `config_template.txt`
+- **项目 README**: `README.md`
+
+---
+
+**升级完成时间**: 2025-01-XX  
+**验证状态**: ✅ 所有检查通过
+

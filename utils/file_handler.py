@@ -78,7 +78,11 @@ def format_file_size(size_bytes: int) -> str:
 
 
 def ensure_directory_exists(directory: str):
-    """确保目录存在"""
+    """确保目录存在（仅在本地模式下）"""
+    # 在云模式下，不应该创建本地目录
+    if config.STORAGE_MODE == "cloud":
+        logger.warning(f"[文件处理] 云模式下跳过目录创建: {directory}")
+        return
     Path(directory).mkdir(parents=True, exist_ok=True)
 
 

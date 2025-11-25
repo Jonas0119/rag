@@ -2,15 +2,8 @@
 会话列表组件
 """
 import streamlit as st
-from services import get_session_service
-from .chat_interface import load_session_messages
-
-
-@st.cache_data(ttl=60)  # 缓存60秒，减少数据库查询
-def _get_cached_sessions(user_id: int, limit: int = 50):
-    """缓存会话列表查询"""
-    session_service = get_session_service()
-    return session_service.get_user_sessions(user_id, limit=limit)
+from services import get_session_service, get_cached_sessions
+from .chat import load_session_messages
 
 
 def show_session_list(user_id: int):
@@ -42,7 +35,7 @@ def show_session_list(user_id: int):
     sessions_placeholder.info("📋 正在加载会话列表...")
     
     # 从缓存获取会话列表（如果缓存未命中，会查询数据库）
-    sessions_grouped = _get_cached_sessions(user_id, limit=50)
+    sessions_grouped = get_cached_sessions(user_id)
     
     # 清除占位符，准备显示实际内容
     sessions_placeholder.empty()
@@ -146,22 +139,23 @@ def _display_session_item(session: dict, session_service):
             pin_label = "📌 置顶" if not is_pinned else "📍 取消置顶"
             if st.button(pin_label, key=f"pin_{session_id}", use_container_width=True):
                 session_service.pin_session(session_id, not is_pinned)
+                # 清除session缓存（置顶状态变化）
+                get_cached_sessions.clear()
                 st.rerun()
             
-            # 导出 - 直接下载
-            markdown_content = session_service.export_session_markdown(session_id)
-            if markdown_content:
-                # 使用 on_click 回调来触发 rerun
-                if st.download_button(
-                    label="📥 导出会话",
-                    data=markdown_content,
-                    file_name=f"session_{session_id[:8]}.md",
-                    mime="text/markdown",
-                    key=f"export_{session_id}",
-                    use_container_width=True
-                ):
-                    # download_button 被点击后，触发 rerun 关闭菜单
-                    st.rerun()
+            # 导出 - 按需生成（避免N+1查询）
+            if st.button("📥 导出会话", key=f"export_btn_{session_id}", use_container_width=True):
+                # 只在用户点击时才生成导出内容
+                markdown_content = session_service.export_session_markdown(session_id)
+                if markdown_content:
+                    st.download_button(
+                        label="⬇️ 点击下载",
+                        data=markdown_content,
+                        file_name=f"session_{session_id[:8]}.md",
+                        mime="text/markdown",
+                        key=f"download_{session_id}",
+                        use_container_width=True
+                    )
             
             # 删除
             if st.button("🗑️ 删除会话", key=f"del_{session_id}", use_container_width=True):
@@ -201,8 +195,9 @@ def _confirm_delete_session(session_id: str, title: str, session_service):
                     if 'chat_messages' in st.session_state:
                         st.session_state.chat_messages = []
                 
+                # 清除session缓存（session被删除）
+                get_cached_sessions.clear()
                 st.success("会话已删除")
                 st.rerun()
     
     delete_dialog()
-

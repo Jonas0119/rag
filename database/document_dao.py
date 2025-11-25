@@ -109,6 +109,23 @@ class DocumentDAO:
         row = self.db.execute_one(query, (user_id, status))
         return row['total'] if row and row['total'] else 0
     
+    def get_user_stats_combined(self, user_id: int, status: str = 'active') -> dict:
+        """一次查询获取所有统计数据（优化：3次查询→1次查询）"""
+        query = """
+            SELECT 
+                COUNT(*) as document_count,
+                COALESCE(SUM(file_size), 0) as storage_used,
+                COALESCE(SUM(chunk_count), 0) as vector_count
+            FROM documents 
+            WHERE user_id = ? AND status = ?
+        """
+        row = self.db.execute_one(query, (user_id, status))
+        return {
+            'document_count': row['document_count'] if row else 0,
+            'storage_used': row['storage_used'] if row else 0,
+            'vector_count': row['vector_count'] if row else 0
+        }
+    
     def search_documents(self, user_id: int, keyword: str, limit: int = 20) -> List[Document]:
         """搜索文档"""
         query = """

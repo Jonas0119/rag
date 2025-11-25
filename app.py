@@ -1,28 +1,6 @@
 """
 RAG 智能问答系统 - 主应用
 """
-# ==================== IPv4 强制（必须在所有导入之前）====================
-# 解决 Streamlit Cloud IPv6 连接问题
-# 必须在导入任何可能使用 socket 的模块之前执行
-import socket
-_original_getaddrinfo = socket.getaddrinfo
-
-def _ipv4_getaddrinfo(*args, **kwargs):
-    """强制使用 IPv4 的 getaddrinfo（解决 Streamlit Cloud IPv6 问题）"""
-    try:
-        responses = _original_getaddrinfo(*args, **kwargs)
-        # 过滤掉 IPv6 地址，只返回 IPv4
-        ipv4_responses = [r for r in responses if r[0] == socket.AF_INET]
-        # 如果没有 IPv4 地址但有其他地址，返回原始响应（让系统处理）
-        return ipv4_responses if ipv4_responses else responses
-    except Exception:
-        # 如果出错，回退到原始函数
-        return _original_getaddrinfo(*args, **kwargs)
-
-# 立即替换，确保所有后续的 socket 操作都使用 IPv4
-socket.getaddrinfo = _ipv4_getaddrinfo
-# ==================== IPv4 强制结束 ====================
-
 import streamlit as st
 import os
 import logging
@@ -54,1343 +32,7 @@ from components import (
 
 
 # ==================== 主题相关 ====================
-THEME_CSS = {
-    "dark": """
-    :root {
-        /* 背景色系 - 统一深灰 */
-        --bg-primary: #121212;
-        --bg-secondary: #1E1E1E;
-        --bg-card: #2D2D2D;
-        --bg-hover: #383838;
-        --bg-input: #252525;
-        
-        /* 文字色系 - 高对比度 */
-        --text-primary: #FFFFFF;
-        --text-secondary: #B3B3B3;
-        --text-tertiary: #808080;
-        --text-disabled: #666666;
-        
-        /* 强调色 - 更浅更明亮的蓝色 */
-        --accent: #64B5F6;
-        --accent-hover: #42A5F5;
-        --accent-active: #2196F3;
-        --success: #4CAF50;
-        --warning: #FFA726;
-        --error: #EF5350;
-        --info: #42A5F5;
-        
-        /* 边框 */
-        --border: #404040;
-        --border-light: #505050;
-        --border-focus: #64B5F6;
-    }
-    
-    /* ===== 全局样式 ===== */
-    body, html {
-        background-color: var(--bg-primary) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    * {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* ===== 主容器 ===== */
-    [data-testid="stAppViewContainer"] {
-        background-color: var(--bg-primary) !important;
-    }
-    
-    .main .block-container {
-        background-color: var(--bg-primary) !important;
-        padding-bottom: 0 !important;
-    }
-    
-    /* 底部区域 - 移除白色背景 */
-    [data-testid="stBottom"],
-    .stBottom,
-    [data-testid="stBottomBlockContainer"],
-    section[data-testid="stBottom"] {
-        background-color: var(--bg-primary) !important;
-    }
-    
-    /* 统一所有容器的背景为主背景色 */
-    .element-container,
-    .stChatFloatingInputContainer {
-        background-color: var(--bg-primary) !important;
-    }
-    
-    /* ===== 标题文字 ===== */
-    h1, h2, h3, h4, h5, h6 {
-        color: var(--text-primary) !important;
-    }
-    
-    /* 减少标题的上下间距 - 紧凑显示 */
-    h3 {
-        margin-top: 8px !important;
-        margin-bottom: 6px !important;
-        font-size: 1.1rem !important;
-    }
-    
-    /* 减少容器的上下间距 - 紧凑显示 */
-    .element-container {
-        margin: 4px 0 !important;
-    }
-    
-    /* 主内容区容器 - 更紧凑 */
-    .main .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 1rem !important;
-    }
-    
-    /* 主内容区内的元素容器 - 减少间距 */
-    .main .element-container {
-        margin: 2px 0 !important;
-        padding: 2px 0 !important;
-    }
-    
-    /* 输入框、选择框等的容器 */
-    .stTextInput, .stSelectbox {
-        margin-bottom: 6px !important;
-    }
-    
-    /* caption 文字的间距 */
-    .main p[data-testid="stCaptionContainer"] {
-        margin: 2px 0 !important;
-        padding: 2px 0 !important;
-    }
-    
-    /* column 布局的间距 */
-    .main div[data-testid="column"] {
-        padding: 2px 4px !important;
-    }
-    
-    /* ===== 标题栏 ===== */
-    [data-testid="stHeader"] {
-        background-color: var(--bg-secondary) !important;
-        border-bottom: 1px solid var(--border);
-    }
-    
-    /* 隐藏整个顶部工作区 */
-    [data-testid="stToolbar"],
-    #MainMenu,
-    header[data-testid="stHeader"],
-    header[data-testid="stHeader"] *,
-    header[data-testid="stHeader"] > div,
-    button[kind="header"],
-    [data-testid="stDecoration"] {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0 !important;
-        padding: 0 !important;
-        margin: 0 !important;
-    }
-    
-    /* ===== 侧边栏 ===== */
-    [data-testid="stSidebar"] {
-        background-color: var(--bg-secondary) !important;
-        border-right: 1px solid var(--border) !important;
-        padding-top: 4px !important;
-    }
-    
-    /* 侧边栏内的所有容器 - 统一缩小间距 */
-    [data-testid="stSidebar"] .element-container,
-    [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] div[data-testid="column"] {
-        background-color: transparent !important;
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-    
-    /* 侧边栏的所有 block 容器 */
-    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {
-        gap: 2px !important;
-    }
-    
-    /* 侧边栏输入框 */
-    [data-testid="stSidebar"] input {
-        background-color: var(--bg-card) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 8px;
-    }
-    
-    /* 侧边栏标题 h3 */
-    [data-testid="stSidebar"] h3 {
-        margin-top: 4px !important;
-        margin-bottom: 2px !important;
-        font-size: 1rem !important;
-    }
-    
-    /* 侧边栏分组标题（如"今天"、"昨天"）*/
-    [data-testid="stSidebar"] strong,
-    [data-testid="stSidebar"] .stMarkdown strong {
-        color: var(--text-tertiary) !important;
-        font-size: 11px !important;
-        font-weight: 600 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        display: block;
-        margin-top: 3px !important;
-        margin-bottom: 2px !important;
-    }
-    
-    /* 侧边栏按钮 - 统一深色背景（使用最高优先级选择器）*/
-    [data-testid="stSidebar"] .stButton>button,
-    [data-testid="stSidebar"] button,
-    [data-testid="stSidebar"] .stButton button,
-    [data-testid="stSidebar"] button[kind="secondary"],
-    section[data-testid="stSidebar"] button {
-        background-color: var(--bg-card) !important;
-        color: var(--text-secondary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 5px !important;
-        transition: all 0.2s ease !important;
-        font-weight: 400 !important;
-        padding: 5px 10px !important;
-        margin: 0 !important;
-        font-size: 13px !important;
-        line-height: 1.4 !important;
-    }
-    
-    /* 侧边栏分隔线 */
-    [data-testid="stSidebar"] hr {
-        margin: 3px 0 !important;
-        border: none !important;
-        border-top: 1px solid var(--border) !important;
-        opacity: 0.3 !important;
-    }
-    
-    /* 侧边栏按钮悬停 */
-    [data-testid="stSidebar"] .stButton>button:hover,
-    [data-testid="stSidebar"] button:hover,
-    [data-testid="stSidebar"] .stButton button:hover,
-    [data-testid="stSidebar"] button[kind="secondary"]:hover,
-    section[data-testid="stSidebar"] button:hover {
-        background-color: var(--bg-hover) !important;
-        border-color: var(--accent) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* 侧边栏选中按钮（深蓝色高亮）*/
-    [data-testid="stSidebar"] .stButton>button[kind="primary"],
-    [data-testid="stSidebar"] button[kind="primary"],
-    [data-testid="stSidebar"] .stButton button[kind="primary"],
-    section[data-testid="stSidebar"] button[kind="primary"] {
-        background-color: #1976D2 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        font-weight: 600 !important;
-    }
-    
-    /* 侧边栏选中按钮悬停 */
-    [data-testid="stSidebar"] .stButton>button[kind="primary"]:hover,
-    [data-testid="stSidebar"] button[kind="primary"]:hover,
-    [data-testid="stSidebar"] .stButton button[kind="primary"]:hover,
-    section[data-testid="stSidebar"] button[kind="primary"]:hover {
-        background-color: #1565C0 !important;
-        color: #FFFFFF !important;
-    }
-    
-    /* ===== 主按钮 ===== */
-    .stButton>button {
-        background-color: #1976D2 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        border-radius: 10px;
-        font-weight: 600 !important;
-        transition: all 0.2s ease;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-    }
-    
-    .stButton>button:hover {
-        background-color: #1565C0 !important;
-        color: #FFFFFF !important;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 16px rgba(25, 118, 210, 0.3);
-    }
-    
-    /* ===== 表单提交按钮（登录注册）===== */
-    button[kind="formSubmit"],
-    .stForm button[type="submit"],
-    [data-testid="stFormSubmitButton"] > button {
-        background-color: #1976D2 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        border-radius: 10px !important;
-        font-weight: 600 !important;
-        transition: all 0.2s ease !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
-    }
-    
-    button[kind="formSubmit"]:hover,
-    .stForm button[type="submit"]:hover,
-    [data-testid="stFormSubmitButton"] > button:hover {
-        background-color: #1565C0 !important;
-        color: #FFFFFF !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 16px rgba(25, 118, 210, 0.3) !important;
-    }
-    
-    /* ===== 输入框 ===== */
-    .stTextInput>div>div>input,
-    .stTextArea>div>div>textarea,
-    .stSelectbox>div>div>div,
-    input[type="text"],
-    input[type="password"],
-    input[type="email"],
-    textarea {
-        background-color: var(--bg-card) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 8px;
-    }
-    
-    /* 禁用状态的输入框 - 确保文字可见 */
-    input:disabled,
-    textarea:disabled,
-    .stTextInput>div>div>input:disabled,
-    .stTextArea>div>div>textarea:disabled,
-    input[type="text"]:disabled,
-    input[type="password"]:disabled,
-    input[type="email"]:disabled,
-    .stTextInput input[disabled],
-    .stTextInput input:disabled {
-        background-color: var(--bg-card) !important;
-        color: var(--text-primary) !important;
-        opacity: 1 !important;
-        -webkit-text-fill-color: var(--text-primary) !important;
-    }
-    
-    /* Streamlit 输入框内部文字颜色 */
-    .stTextInput input,
-    .stTextInput input:not(:disabled),
-    .stTextInput input:disabled {
-        color: var(--text-primary) !important;
-        -webkit-text-fill-color: var(--text-primary) !important;
-    }
-    
-    /* 强制移除所有输入框的所有状态边框 */
-    input,
-    textarea,
-    input:hover,
-    textarea:hover,
-    input:focus,
-    textarea:focus,
-    input:active,
-    textarea:active,
-    input:focus-visible,
-    textarea:focus-visible,
-    input:invalid,
-    textarea:invalid,
-    input:valid,
-    textarea:valid,
-    input:disabled,
-    textarea:disabled {
-        border-color: var(--border) !important;
-        outline: none !important;
-        outline-width: 0 !important;
-        outline-style: none !important;
-        outline-offset: 0 !important;
-        box-shadow: none !important;
-    }
-    
-    input::placeholder,
-    textarea::placeholder {
-        color: var(--text-disabled) !important;
-    }
-    
-    .stTextInput label,
-    .stTextArea label,
-    .stSelectbox label {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* 处理浏览器自动填充的背景与文字颜色 */
-    input:-webkit-autofill,
-    input:-webkit-autofill:focus,
-    input:-webkit-autofill:hover,
-    textarea:-webkit-autofill,
-    textarea:-webkit-autofill:focus,
-    textarea:-webkit-autofill:hover {
-        -webkit-box-shadow: 0 0 0 1000px var(--bg-card) inset !important;
-        -webkit-text-fill-color: var(--text-primary) !important;
-        caret-color: var(--text-primary) !important;
-        transition: background-color 5000s ease-in-out 0s;
-    }
-
-    /* 处理浏览器自动填充的背景与文字颜色 */
-    input:-webkit-autofill,
-    input:-webkit-autofill:focus,
-    input:-webkit-autofill:hover,
-    textarea:-webkit-autofill,
-    textarea:-webkit-autofill:focus,
-    textarea:-webkit-autofill:hover {
-        -webkit-box-shadow: 0 0 0 1000px var(--bg-card) inset !important;
-        -webkit-text-fill-color: var(--text-primary) !important;
-        caret-color: var(--text-primary) !important;
-        transition: background-color 5000s ease-in-out 0s;
-    }
-    
-    /* ===== 聊天输入框 - 简洁统一设计 ===== */
-    /* 容器背景统一 */
-    .stChatInput,
-    [data-testid="stChatInput"],
-    .stChatFloatingInputContainer,
-    [data-testid="InputInstructions"] {
-        background-color: var(--bg-primary) !important;
-        background: var(--bg-primary) !important;
-    }
-    
-    /* 确保输入框容器无padding */
-    .stChatInput>div,
-    [data-testid="stChatInput"]>div {
-        background-color: var(--bg-primary) !important;
-        padding: 0 !important;
-    }
-    
-    .stChatInput>div>div,
-    [data-testid="stChatInput"]>div>div {
-        background-color: var(--bg-primary) !important;
-        padding: 0 !important;
-    }
-    
-    /* 输入框本体 - 简洁统一 */
-    .stChatInput>div>div>textarea,
-    [data-testid="stChatInput"] textarea,
-    .stChatInput textarea {
-        /* 背景：统一纯色，与主背景协调 */
-        background-color: var(--bg-card) !important;
-        background-image: none !important;
-        
-        /* 文字 */
-        color: var(--text-primary) !important;
-        font-size: 15px !important;
-        line-height: 1.6 !important;
-        
-        /* 光标颜色 - 确保可见 */
-        caret-color: var(--text-primary) !important;
-        
-        /* 边框：柔和的边框 */
-        border: 1px solid var(--border) !important;
-        border-radius: 12px !important;
-        
-        /* 内边距 */
-        padding: 12px 16px !important;
-        
-        /* 无阴影，保持简洁 */
-        box-shadow: none !important;
-        
-        /* 平滑过渡 */
-        transition: border-color 0.2s ease, background-color 0.2s ease !important;
-    }
-    
-    /* Placeholder */
-    .stChatInput>div>div>textarea::placeholder,
-    [data-testid="stChatInput"] textarea::placeholder,
-    .stChatInput textarea::placeholder {
-        color: var(--text-disabled) !important;
-        opacity: 1 !important;
-        font-weight: 400 !important;
-    }
-    
-    /* Hover状态 - 轻微变化 */
-    .stChatInput>div>div>textarea:hover,
-    [data-testid="stChatInput"] textarea:hover,
-    .stChatInput textarea:hover {
-        border-color: var(--border-light) !important;
-        background-color: var(--bg-card) !important;
-        outline: none !important;
-    }
-    
-    /* Focus状态 - 柔和反馈 */
-    .stChatInput>div>div>textarea:focus,
-    [data-testid="stChatInput"] textarea:focus,
-    .stChatInput textarea:focus,
-    .stChatInput>div>div>textarea:focus-visible,
-    [data-testid="stChatInput"] textarea:focus-visible,
-    .stChatInput textarea:focus-visible,
-    .stChatInput>div>div>textarea:active,
-    [data-testid="stChatInput"] textarea:active,
-    .stChatInput textarea:active {
-        border-color: var(--border-light) !important;
-        background-color: var(--bg-card) !important;
-        outline: none !important;
-        box-shadow: none !important;
-        /* 确保焦点时光标可见 */
-        caret-color: var(--text-primary) !important;
-    }
-    
-    /* 其他状态 */
-    .stChatInput>div>div>textarea:invalid,
-    [data-testid="stChatInput"] textarea:invalid,
-    .stChatInput textarea:invalid,
-    .stChatInput>div>div>textarea:valid,
-    [data-testid="stChatInput"] textarea:valid,
-    .stChatInput textarea:valid {
-        outline: none !important;
-    }
-    
-    /* 发送按钮区域 - 统一背景 */
-    .stChatInput button,
-    [data-testid="stChatInput"] button {
-        background-color: transparent !important;
-        border: none !important;
-        color: var(--text-secondary) !important;
-    }
-    
-    .stChatInput button:hover,
-    [data-testid="stChatInput"] button:hover {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* ===== 聊天消息 ===== */
-    [data-testid="stChatMessage"] {
-        background-color: transparent !important;
-        background: transparent !important;
-        border: none !important;
-        border-radius: 0 !important;
-        box-shadow: none !important;
-        padding: 8px 0 !important;
-    }
-    
-    [data-testid="stChatMessage"] * {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* ===== Radio 按钮 ===== */
-    .stRadio label,
-    .stRadio > div {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* ===== 指标卡片 ===== */
-    div[data-testid="stMetricValue"] {
-        color: var(--text-primary) !important;
-        font-weight: 600;
-    }
-    
-    div[data-testid="stMetricLabel"] {
-        color: var(--text-tertiary) !important;
-    }
-    
-    /* Metric 容器 - 统一样式，无边框无背景 */
-    div[data-testid="stMetricContainer"],
-    [data-testid="stMetric"] {
-        background-color: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        padding: 8px 0 !important;
-        margin: 0 !important;
-    }
-    
-    /* ===== 辅助文字 ===== */
-    .stCaption,
-    small {
-        color: var(--text-tertiary) !important;
-    }
-    
-    /* ===== 提示框 ===== */
-    .stSuccess {
-        background-color: var(--bg-card) !important;
-        color: var(--success) !important;
-        border-left: 4px solid var(--success);
-    }
-    
-    .stInfo {
-        background-color: var(--bg-card) !important;
-        color: var(--info) !important;
-        border-left: 4px solid var(--info);
-    }
-    
-    .stWarning {
-        background-color: var(--bg-card) !important;
-        color: var(--warning) !important;
-        border-left: 4px solid var(--warning);
-    }
-    
-    .stError {
-        background-color: var(--bg-card) !important;
-        color: var(--error) !important;
-        border-left: 4px solid var(--error);
-    }
-    
-    /* ===== Expander 折叠面板 ===== */
-    .streamlit-expanderHeader {
-        background-color: var(--bg-card) !important;
-        color: var(--text-secondary) !important;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-    }
-    
-    .streamlit-expanderContent {
-        background-color: var(--bg-card) !important;
-        border: 1px solid var(--border);
-        border-top: none;
-    }
-    
-    /* ===== 分隔线 ===== */
-    hr {
-        border-color: var(--border) !important;
-    }
-    
-    /* ===== 容器 ===== */
-    .stContainer,
-    [data-testid="stVerticalBlock"],
-    [data-testid="stHorizontalBlock"],
-    div[data-testid="column"] {
-        background-color: transparent !important;
-    }
-    
-    /* ===== Popover 弹窗 ===== */
-    [data-testid="stPopover"],
-    [data-baseweb="popover"] {
-        background-color: var(--bg-card) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 8px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    }
-    
-    /* Popover 内的所有元素背景 */
-    [data-testid="stPopover"] *,
-    [data-baseweb="popover"] * {
-        background-color: transparent !important;
-    }
-    
-    /* Popover 内的文字 */
-    [data-testid="stPopover"] p,
-    [data-testid="stPopover"] span,
-    [data-testid="stPopover"] div {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* Popover 内的按钮 - 统一深色风格 */
-    [data-testid="stPopover"] button,
-    [data-baseweb="popover"] button {
-        background-color: var(--bg-card) !important;
-        color: var(--text-secondary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 6px !important;
-        transition: all 0.2s ease !important;
-        font-weight: 400 !important;
-        padding: 8px 16px !important;
-    }
-    
-    /* Popover 内按钮悬停 */
-    [data-testid="stPopover"] button:hover,
-    [data-baseweb="popover"] button:hover {
-        background-color: var(--bg-hover) !important;
-        color: var(--text-primary) !important;
-        border-color: var(--accent) !important;
-    }
-    
-    /* Popover 标题 */
-    [data-testid="stPopover"] strong {
-        color: var(--text-primary) !important;
-    }
-    
-    /* ===== 下拉菜单 ===== */
-    [data-baseweb="select"],
-    [role="listbox"],
-    [data-baseweb="menu"] {
-        background-color: var(--bg-card) !important;
-    }
-    
-    [data-baseweb="menu"] li {
-        background-color: var(--bg-card) !important;
-        color: var(--text-secondary) !important;
-    }
-    
-    [data-baseweb="menu"] li:hover {
-        background-color: var(--bg-hover) !important;
-    }
-    
-    /* ===== 文件上传器 ===== */
-    [data-testid="stFileUploader"] section {
-        background-color: var(--bg-card) !important;
-        border: 2px dashed var(--border) !important;
-        border-radius: 12px;
-    }
-    
-    [data-testid="stFileUploader"] section:hover {
-        border-color: var(--accent) !important;
-    }
-    
-    /* ===== Tab 标签页 ===== */
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: transparent !important;
-        border-bottom: 1px solid var(--border);
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        color: var(--text-tertiary) !important;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        color: var(--accent) !important;
-        border-bottom: 2px solid var(--accent) !important;
-    }
-    
-    /* ===== 进度条 ===== */
-    .stProgress > div > div {
-        background-color: var(--accent) !important;
-    }
-    """,
-    "light": """
-    :root {
-        /* 背景色系 - 统一浅灰白 */
-        --bg-primary: #F5F5F5;
-        --bg-secondary: #FAFAFA;
-        --bg-card: #FFFFFF;
-        --bg-hover: #EEEEEE;
-        --bg-input: #FAFAFA;
-        
-        /* 文字色系 - 深色清晰 */
-        --text-primary: #212121;
-        --text-secondary: #616161;
-        --text-tertiary: #9E9E9E;
-        --text-disabled: #AAAAAA;
-        
-        /* 强调色 - 更浅更明亮的蓝色 */
-        --accent: #42A5F5;
-        --accent-hover: #2196F3;
-        --accent-active: #1976D2;
-        --success: #66BB6A;
-        --warning: #FFA726;
-        --error: #EF5350;
-        --info: #29B6F6;
-        
-        /* 边框 */
-        --border: #E0E0E0;
-        --border-light: #D0D0D0;
-        --border-focus: #42A5F5;
-    }
-    
-    /* ===== 全局样式 ===== */
-    body, html {
-        background-color: var(--bg-primary) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    * {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* ===== 主容器 ===== */
-    [data-testid="stAppViewContainer"] {
-        background-color: var(--bg-primary) !important;
-    }
-    
-    .main .block-container {
-        background-color: var(--bg-primary) !important;
-        padding-bottom: 0 !important;
-    }
-    
-    /* 底部区域 - 移除白色背景 */
-    [data-testid="stBottom"],
-    .stBottom,
-    [data-testid="stBottomBlockContainer"],
-    section[data-testid="stBottom"] {
-        background-color: var(--bg-primary) !important;
-    }
-    
-    /* 统一所有容器的背景为主背景色 */
-    .element-container,
-    .stChatFloatingInputContainer {
-        background-color: var(--bg-primary) !important;
-    }
-    
-    /* ===== 标题文字 ===== */
-    h1, h2, h3, h4, h5, h6 {
-        color: var(--text-primary) !important;
-    }
-    
-    /* 减少标题的上下间距 - 紧凑显示 */
-    h3 {
-        margin-top: 8px !important;
-        margin-bottom: 6px !important;
-        font-size: 1.1rem !important;
-    }
-    
-    /* 减少容器的上下间距 - 紧凑显示 */
-    .element-container {
-        margin: 4px 0 !important;
-    }
-    
-    /* 主内容区容器 - 更紧凑 */
-    .main .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 1rem !important;
-    }
-    
-    /* 主内容区内的元素容器 - 减少间距 */
-    .main .element-container {
-        margin: 2px 0 !important;
-        padding: 2px 0 !important;
-    }
-    
-    /* 输入框、选择框等的容器 */
-    .stTextInput, .stSelectbox {
-        margin-bottom: 6px !important;
-    }
-    
-    /* caption 文字的间距 */
-    .main p[data-testid="stCaptionContainer"] {
-        margin: 2px 0 !important;
-        padding: 2px 0 !important;
-    }
-    
-    /* column 布局的间距 */
-    .main div[data-testid="column"] {
-        padding: 2px 4px !important;
-    }
-    
-    /* ===== 标题栏 ===== */
-    [data-testid="stHeader"] {
-        background-color: var(--bg-secondary) !important;
-        border-bottom: 1px solid var(--border);
-    }
-    
-    /* 隐藏整个顶部工作区 */
-    [data-testid="stToolbar"],
-    #MainMenu,
-    header[data-testid="stHeader"],
-    header[data-testid="stHeader"] *,
-    header[data-testid="stHeader"] > div,
-    button[kind="header"],
-    [data-testid="stDecoration"] {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0 !important;
-        padding: 0 !important;
-        margin: 0 !important;
-    }
-    
-    /* ===== 侧边栏 ===== */
-    [data-testid="stSidebar"] {
-        background-color: var(--bg-secondary) !important;
-        border-right: 1px solid var(--border) !important;
-        padding-top: 4px !important;
-    }
-    
-    /* 侧边栏内的所有容器 - 统一缩小间距 */
-    [data-testid="stSidebar"] .element-container,
-    [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] div[data-testid="column"] {
-        background-color: transparent !important;
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-    
-    /* 侧边栏的所有 block 容器 */
-    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {
-        gap: 2px !important;
-    }
-    
-    /* 侧边栏输入框 */
-    [data-testid="stSidebar"] input {
-        background-color: var(--bg-card) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 8px;
-    }
-    
-    /* 侧边栏标题 h3 */
-    [data-testid="stSidebar"] h3 {
-        margin-top: 4px !important;
-        margin-bottom: 2px !important;
-        font-size: 1rem !important;
-    }
-    
-    /* 侧边栏分组标题（如"今天"、"昨天"）*/
-    [data-testid="stSidebar"] strong,
-    [data-testid="stSidebar"] .stMarkdown strong {
-        color: var(--text-tertiary) !important;
-        font-size: 11px !important;
-        font-weight: 600 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        display: block;
-        margin-top: 3px !important;
-        margin-bottom: 2px !important;
-    }
-    
-    /* 侧边栏按钮 - 统一浅色背景（使用最高优先级选择器）*/
-    [data-testid="stSidebar"] .stButton>button,
-    [data-testid="stSidebar"] button,
-    [data-testid="stSidebar"] .stButton button,
-    [data-testid="stSidebar"] button[kind="secondary"],
-    section[data-testid="stSidebar"] button {
-        background-color: var(--bg-card) !important;
-        color: var(--text-secondary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 6px !important;
-        transition: all 0.2s ease !important;
-        font-weight: 400 !important;
-        padding: 6px 12px !important;
-        margin: 0 !important;
-        font-size: 14px !important;
-    }
-    
-    /* 侧边栏分隔线 */
-    [data-testid="stSidebar"] hr {
-        margin: 3px 0 !important;
-        border: none !important;
-        border-top: 1px solid var(--border) !important;
-        opacity: 0.3 !important;
-    }
-    
-    /* 侧边栏按钮悬停 */
-    [data-testid="stSidebar"] .stButton>button:hover,
-    [data-testid="stSidebar"] button:hover,
-    [data-testid="stSidebar"] .stButton button:hover,
-    [data-testid="stSidebar"] button[kind="secondary"]:hover,
-    section[data-testid="stSidebar"] button:hover {
-        background-color: var(--bg-hover) !important;
-        border-color: var(--accent) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* 侧边栏选中按钮（深蓝色高亮）*/
-    [data-testid="stSidebar"] .stButton>button[kind="primary"],
-    [data-testid="stSidebar"] button[kind="primary"],
-    [data-testid="stSidebar"] .stButton button[kind="primary"],
-    section[data-testid="stSidebar"] button[kind="primary"] {
-        background-color: #1976D2 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        font-weight: 600 !important;
-    }
-    
-    /* 侧边栏选中按钮悬停 */
-    [data-testid="stSidebar"] .stButton>button[kind="primary"]:hover,
-    [data-testid="stSidebar"] button[kind="primary"]:hover,
-    [data-testid="stSidebar"] .stButton button[kind="primary"]:hover,
-    section[data-testid="stSidebar"] button[kind="primary"]:hover {
-        background-color: #1565C0 !important;
-        color: #FFFFFF !important;
-    }
-    
-    /* ===== 主按钮 ===== */
-    .stButton>button {
-        background-color: #1565C0 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        border-radius: 10px;
-        font-weight: 600 !important;
-        transition: all 0.2s ease;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    }
-    
-    .stButton>button:hover {
-        background-color: #0D47A1 !important;
-        color: #FFFFFF !important;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 16px rgba(13, 71, 161, 0.3);
-    }
-    
-    /* ===== 表单提交按钮（登录注册）===== */
-    button[kind="formSubmit"],
-    .stForm button[type="submit"],
-    [data-testid="stFormSubmitButton"] > button {
-        background-color: #1565C0 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        border-radius: 10px !important;
-        font-weight: 600 !important;
-        transition: all 0.2s ease !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
-    }
-    
-    button[kind="formSubmit"]:hover,
-    .stForm button[type="submit"]:hover,
-    [data-testid="stFormSubmitButton"] > button:hover {
-        background-color: #0D47A1 !important;
-        color: #FFFFFF !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 16px rgba(13, 71, 161, 0.3) !important;
-    }
-    
-    /* ===== 输入框 ===== */
-    .stTextInput>div>div>input,
-    .stTextArea>div>div>textarea,
-    .stSelectbox>div>div>div,
-    input[type="text"],
-    input[type="password"],
-    input[type="email"],
-    textarea {
-        background-color: var(--bg-card) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 8px;
-    }
-    
-    /* 禁用状态的输入框 - 确保文字可见 */
-    input:disabled,
-    textarea:disabled,
-    .stTextInput>div>div>input:disabled,
-    .stTextArea>div>div>textarea:disabled,
-    input[type="text"]:disabled,
-    input[type="password"]:disabled,
-    input[type="email"]:disabled,
-    .stTextInput input[disabled],
-    .stTextInput input:disabled {
-        background-color: var(--bg-card) !important;
-        color: var(--text-primary) !important;
-        opacity: 1 !important;
-        -webkit-text-fill-color: var(--text-primary) !important;
-    }
-    
-    /* Streamlit 输入框内部文字颜色 */
-    .stTextInput input,
-    .stTextInput input:not(:disabled),
-    .stTextInput input:disabled {
-        color: var(--text-primary) !important;
-        -webkit-text-fill-color: var(--text-primary) !important;
-    }
-    
-    /* 强制移除所有输入框的所有状态边框 */
-    input,
-    textarea,
-    input:hover,
-    textarea:hover,
-    input:focus,
-    textarea:focus,
-    input:active,
-    textarea:active,
-    input:focus-visible,
-    textarea:focus-visible,
-    input:invalid,
-    textarea:invalid,
-    input:valid,
-    textarea:valid,
-    input:disabled,
-    textarea:disabled {
-        border-color: var(--border) !important;
-        outline: none !important;
-        outline-width: 0 !important;
-        outline-style: none !important;
-        outline-offset: 0 !important;
-        box-shadow: none !important;
-    }
-    
-    input::placeholder,
-    textarea::placeholder {
-        color: var(--text-disabled) !important;
-    }
-    
-    .stTextInput label,
-    .stTextArea label,
-    .stSelectbox label {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* ===== 聊天输入框 - 简洁统一设计 ===== */
-    /* 容器背景统一 */
-    .stChatInput,
-    [data-testid="stChatInput"],
-    .stChatFloatingInputContainer,
-    [data-testid="InputInstructions"] {
-        background-color: var(--bg-primary) !important;
-        background: var(--bg-primary) !important;
-    }
-    
-    /* 确保输入框容器无padding */
-    .stChatInput>div,
-    [data-testid="stChatInput"]>div {
-        background-color: var(--bg-primary) !important;
-        padding: 0 !important;
-    }
-    
-    .stChatInput>div>div,
-    [data-testid="stChatInput"]>div>div {
-        background-color: var(--bg-primary) !important;
-        padding: 0 !important;
-    }
-    
-    /* 输入框本体 - 简洁统一 */
-    .stChatInput>div>div>textarea,
-    [data-testid="stChatInput"] textarea,
-    .stChatInput textarea {
-        /* 背景：统一纯色，与主背景协调 */
-        background-color: var(--bg-card) !important;
-        background-image: none !important;
-        
-        /* 文字 */
-        color: var(--text-primary) !important;
-        font-size: 15px !important;
-        line-height: 1.6 !important;
-        
-        /* 光标颜色 - 确保可见 */
-        caret-color: var(--text-primary) !important;
-        
-        /* 边框：柔和的边框 */
-        border: 1px solid var(--border) !important;
-        border-radius: 12px !important;
-        
-        /* 内边距 */
-        padding: 12px 16px !important;
-        
-        /* 无阴影，保持简洁 */
-        box-shadow: none !important;
-        
-        /* 平滑过渡 */
-        transition: border-color 0.2s ease, background-color 0.2s ease !important;
-    }
-    
-    /* Placeholder */
-    .stChatInput>div>div>textarea::placeholder,
-    [data-testid="stChatInput"] textarea::placeholder,
-    .stChatInput textarea::placeholder {
-        color: var(--text-disabled) !important;
-        opacity: 1 !important;
-        font-weight: 400 !important;
-    }
-    
-    /* Hover状态 - 轻微变化 */
-    .stChatInput>div>div>textarea:hover,
-    [data-testid="stChatInput"] textarea:hover,
-    .stChatInput textarea:hover {
-        border-color: var(--border-light) !important;
-        background-color: var(--bg-card) !important;
-        outline: none !important;
-    }
-    
-    /* Focus状态 - 柔和反馈 */
-    .stChatInput>div>div>textarea:focus,
-    [data-testid="stChatInput"] textarea:focus,
-    .stChatInput textarea:focus,
-    .stChatInput>div>div>textarea:focus-visible,
-    [data-testid="stChatInput"] textarea:focus-visible,
-    .stChatInput textarea:focus-visible,
-    .stChatInput>div>div>textarea:active,
-    [data-testid="stChatInput"] textarea:active,
-    .stChatInput textarea:active {
-        border-color: var(--border-light) !important;
-        background-color: var(--bg-card) !important;
-        outline: none !important;
-        box-shadow: none !important;
-        /* 确保焦点时光标可见 */
-        caret-color: var(--text-primary) !important;
-    }
-    
-    /* 其他状态 */
-    .stChatInput>div>div>textarea:invalid,
-    [data-testid="stChatInput"] textarea:invalid,
-    .stChatInput textarea:invalid,
-    .stChatInput>div>div>textarea:valid,
-    [data-testid="stChatInput"] textarea:valid,
-    .stChatInput textarea:valid {
-        outline: none !important;
-    }
-    
-    /* 发送按钮区域 - 统一背景 */
-    .stChatInput button,
-    [data-testid="stChatInput"] button {
-        background-color: transparent !important;
-        border: none !important;
-        color: var(--text-secondary) !important;
-    }
-    
-    .stChatInput button:hover,
-    [data-testid="stChatInput"] button:hover {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* ===== 聊天消息 ===== */
-    [data-testid="stChatMessage"] {
-        background-color: transparent !important;
-        background: transparent !important;
-        border: none !important;
-        border-radius: 0 !important;
-        box-shadow: none !important;
-        padding: 8px 0 !important;
-    }
-    
-    [data-testid="stChatMessage"] * {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* ===== Radio 按钮 ===== */
-    .stRadio label,
-    .stRadio > div {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* ===== 指标卡片 ===== */
-    div[data-testid="stMetricValue"] {
-        color: var(--text-primary) !important;
-        font-weight: 600;
-    }
-    
-    div[data-testid="stMetricLabel"] {
-        color: var(--text-tertiary) !important;
-    }
-    
-    /* Metric 容器 - 统一样式，无边框无背景 */
-    div[data-testid="stMetricContainer"],
-    [data-testid="stMetric"] {
-        background-color: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        padding: 8px 0 !important;
-        margin: 0 !important;
-    }
-    
-    /* ===== 辅助文字 ===== */
-    .stCaption,
-    small {
-        color: var(--text-tertiary) !important;
-    }
-    
-    /* ===== 提示框 ===== */
-    .stSuccess {
-        background-color: var(--bg-card) !important;
-        color: var(--success) !important;
-        border-left: 4px solid var(--success);
-    }
-    
-    .stInfo {
-        background-color: var(--bg-card) !important;
-        color: var(--info) !important;
-        border-left: 4px solid var(--info);
-    }
-    
-    .stWarning {
-        background-color: var(--bg-card) !important;
-        color: var(--warning) !important;
-        border-left: 4px solid var(--warning);
-    }
-    
-    .stError {
-        background-color: var(--bg-card) !important;
-        color: var(--error) !important;
-        border-left: 4px solid var(--error);
-    }
-    
-    /* ===== Expander 折叠面板 ===== */
-    .streamlit-expanderHeader {
-        background-color: var(--bg-card) !important;
-        color: var(--text-secondary) !important;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-    }
-    
-    .streamlit-expanderContent {
-        background-color: var(--bg-card) !important;
-        border: 1px solid var(--border);
-        border-top: none;
-    }
-    
-    /* ===== 分隔线 ===== */
-    hr {
-        border-color: var(--border) !important;
-    }
-    
-    /* ===== 容器 ===== */
-    .stContainer,
-    [data-testid="stVerticalBlock"],
-    [data-testid="stHorizontalBlock"],
-    div[data-testid="column"] {
-        background-color: transparent !important;
-    }
-    
-    /* ===== Popover 弹窗 ===== */
-    [data-testid="stPopover"],
-    [data-baseweb="popover"] {
-        background-color: var(--bg-card) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 8px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-    }
-    
-    /* Popover 内的所有元素背景 */
-    [data-testid="stPopover"] *,
-    [data-baseweb="popover"] * {
-        background-color: transparent !important;
-    }
-    
-    /* Popover 内的文字 */
-    [data-testid="stPopover"] p,
-    [data-testid="stPopover"] span,
-    [data-testid="stPopover"] div {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* Popover 内的按钮 - 统一浅色风格 */
-    [data-testid="stPopover"] button,
-    [data-baseweb="popover"] button {
-        background-color: var(--bg-card) !important;
-        color: var(--text-secondary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: 6px !important;
-        transition: all 0.2s ease !important;
-        font-weight: 400 !important;
-        padding: 8px 16px !important;
-    }
-    
-    /* Popover 内按钮悬停 */
-    [data-testid="stPopover"] button:hover,
-    [data-baseweb="popover"] button:hover {
-        background-color: var(--bg-hover) !important;
-        color: var(--text-primary) !important;
-        border-color: var(--accent) !important;
-    }
-    
-    /* Popover 标题 */
-    [data-testid="stPopover"] strong {
-        color: var(--text-primary) !important;
-    }
-    
-    /* ===== 下拉菜单 ===== */
-    [data-baseweb="select"],
-    [role="listbox"],
-    [data-baseweb="menu"] {
-        background-color: var(--bg-card) !important;
-    }
-    
-    [data-baseweb="menu"] li {
-        background-color: var(--bg-card) !important;
-        color: var(--text-secondary) !important;
-    }
-    
-    [data-baseweb="menu"] li:hover {
-        background-color: var(--bg-hover) !important;
-    }
-    
-    /* ===== 文件上传器 ===== */
-    [data-testid="stFileUploader"] section {
-        background-color: var(--bg-card) !important;
-        border: 2px dashed var(--border) !important;
-        border-radius: 12px;
-    }
-    
-    [data-testid="stFileUploader"] section:hover {
-        border-color: var(--accent) !important;
-    }
-    
-    /* ===== Tab 标签页 ===== */
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: transparent !important;
-        border-bottom: 1px solid var(--border);
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        color: var(--text-tertiary) !important;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        color: var(--accent) !important;
-        border-bottom: 2px solid var(--accent) !important;
-    }
-    
-    /* ===== 进度条 ===== */
-    .stProgress > div > div {
-        background-color: var(--accent) !important;
-    }
-    """
-}
+from styles.theme import THEME_CSS
 
 
 def apply_theme():
@@ -1408,14 +50,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 初始化主题设置
-if "theme_mode" not in st.session_state:
-    st.session_state.theme_mode = "dark"
 
-apply_theme()
 
-# 初始化认证管理器（每次脚本运行都重新创建，确保请求级缓存被重置）
-auth_manager = AuthManager()
+
 
 # 在应用启动时预加载 Embedding 模型（异步，不阻塞）
 # 使用 st.cache_resource 确保只触发一次（即使页面刷新）
@@ -1429,11 +66,35 @@ def init_embedding_model():
     except Exception as e:
         logger.warning(f"[脚本初始化] 触发 Embedding 模型加载失败: {str(e)}")
 
-init_embedding_model()
+
 
 
 def main():
     """主函数"""
+    # 初始化主题设置
+    if "theme_mode" not in st.session_state:
+        st.session_state.theme_mode = "dark"
+    apply_theme()
+    
+    # 检查部署配置（仅在首次运行时检查）
+    if "deployment_checked" not in st.session_state:
+        from utils.deployment_check import check_cloud_deployment_config
+        is_ok, messages = check_cloud_deployment_config()
+        if not is_ok:
+            errors = [m for m in messages if not ("建议" in m or "STORAGE_MODE" in m or "VECTOR_DB_MODE" in m or "DATABASE_MODE" in m)]
+            if errors:
+                logger.error(f"[部署检查] 配置错误: {errors}")
+                st.error("⚠️ 部署配置检查失败，请检查 Streamlit Cloud Secrets 配置")
+                for error in errors:
+                    st.error(f"  • {error}")
+                st.stop()
+        st.session_state.deployment_checked = True
+    
+    # 初始化认证管理器（每次脚本运行都重新创建，确保请求级缓存被重置）
+    auth_manager = AuthManager()
+    
+    # 在应用启动时预加载 Embedding 模型
+    init_embedding_model()
     
     # 获取当前用户（内存优先，Cookie兜底）
     user = auth_manager.get_current_user()
@@ -1446,10 +107,10 @@ def main():
     
     # 已登录，显示主应用
     logger.info(f"[主应用] 用户已认证: user_id={user.user_id}, username={user.username}")
-    show_main_app(user)
+    show_main_app(user, auth_manager)
 
 
-def show_main_app(user):
+def show_main_app(user, auth_manager):
     """显示主应用界面"""
     
     user_id = user.user_id
@@ -1457,6 +118,9 @@ def show_main_app(user):
     # 初始化页面状态
     if 'current_page' not in st.session_state:
         st.session_state.current_page = "💬 智能问答"
+    
+    # 设置侧边栏切换功能
+    _setup_sidebar_toggle()
     
     # 侧边栏
     with st.sidebar:
@@ -1507,19 +171,281 @@ def show_main_app(user):
     if page == "💬 智能问答":
         show_chat_page(user_id)
     elif page == "📁 知识库管理":
-        show_knowledge_base_page(user_id)
+        show_document_manager(user_id)
     elif page == "⚙️ 系统设置":
         show_settings_page(user_id)
+
+
+def _setup_sidebar_toggle():
+    """统一的侧边栏切换功能设置"""
+    # 使用 HTML 组件创建按钮和脚本
+    # 注意：我们需要通过 window.parent 来访问主页面 DOM
+    toggle_script = """
+    <script>
+    (function() {
+        // 获取父级文档对象
+        const doc = window.parent.document;
+        
+        // 创建或获取按钮
+        function getOrCreateButton() {
+            let btn = doc.getElementById('sidebar-toggle-btn');
+            
+            if (!btn) {
+                btn = doc.createElement('button');
+                btn.id = 'sidebar-toggle-btn';
+                btn.innerHTML = '&#187;'; // ">>" 符号
+                
+                // 初始样式
+                Object.assign(btn.style, {
+                    position: 'fixed',
+                    top: '20px',
+                    left: '20px',
+                    zIndex: '999999',
+                    width: '42px',
+                    height: '42px',
+                    borderRadius: '8px', // 圆角矩形
+                    backgroundColor: 'var(--bg-card)', // 跟随主题卡片背景
+                    color: 'var(--text-secondary)', // 跟随主题次要文字颜色
+                    border: '2px solid var(--accent)', // 跟随主题强调色边框
+                    fontSize: '24px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                    transition: 'all 0.2s ease',
+                    display: 'none', // 默认隐藏
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontFamily: 'inherit',
+                    userSelect: 'none',
+                    lineHeight: '1',
+                    paddingBottom: '4px' // 微调文字垂直居中
+                });
+                
+                // 添加到父级 body
+                doc.body.appendChild(btn);
+            }
+            
+            // 移除旧的事件监听器
+            btn.onclick = null;
+            btn.onmouseover = null;
+            btn.onmouseout = null;
+            
+            // 重新绑定交互效果
+            btn.onmouseover = function() {
+                this.style.backgroundColor = 'var(--bg-hover)'; // 跟随主题悬停背景
+                this.style.color = 'var(--accent)'; // 悬停时文字变亮
+                this.style.transform = 'scale(1.05)';
+                this.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.2)';
+            };
+            btn.onmouseout = function() {
+                this.style.backgroundColor = 'var(--bg-card)';
+                this.style.color = 'var(--text-secondary)';
+                this.style.transform = 'scale(1)';
+                this.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
+            };
+            
+            // 重新绑定点击事件
+            btn.onclick = function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // 点击动画反馈
+                this.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    this.style.transform = 'scale(1.05)';
+                }, 100);
+                
+                expandSidebar();
+            };
+            
+            return btn;
+        }
+
+        // 检测侧边栏是否隐藏
+        function isSidebarHidden() {
+            const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+            if (!sidebar) return true;
+            
+            const style = window.parent.getComputedStyle(sidebar);
+            const width = sidebar.offsetWidth || parseFloat(style.width);
+            const transform = style.transform;
+            
+            // 检查是否隐藏
+            const isCollapsed = sidebar.getAttribute('aria-expanded') === 'false';
+            
+            return isCollapsed || width <= 0 || (transform && transform.includes('translateX(-'));
+        }
+        
+        // 展开侧边栏 - 终极方案
+        function expandSidebar() {
+            console.log("[Sidebar Fix] Attempting to toggle sidebar...");
+            
+            // 步骤 1: 强制获取焦点
+            try {
+                window.parent.focus();
+                if (doc.activeElement) {
+                    doc.activeElement.blur(); // 移除当前焦点，避免干扰
+                }
+            } catch(e) {
+                console.warn("[Sidebar Fix] Focus attempt failed:", e);
+            }
+            
+            // 步骤 2: 模拟键盘 'V' 键 (全套事件)
+            try {
+                const eventProps = {
+                    key: 'v',
+                    code: 'KeyV',
+                    keyCode: 86,
+                    which: 86,
+                    bubbles: true,
+                    cancelable: true,
+                    view: window.parent,
+                    composed: true
+                };
+                
+                // 依次触发 keydown, keypress, keyup
+                doc.body.dispatchEvent(new KeyboardEvent('keydown', eventProps));
+                doc.body.dispatchEvent(new KeyboardEvent('keypress', eventProps));
+                doc.body.dispatchEvent(new KeyboardEvent('keyup', eventProps));
+                
+                console.log("[Sidebar Fix] Dispatched 'v' keyboard sequence");
+                
+                // 稍后检查是否成功
+                setTimeout(checkAndRetry, 200);
+            } catch (e) {
+                console.error("[Sidebar Fix] Keyboard simulation failed:", e);
+                fallbackExpand();
+            }
+        }
+        
+        // 检查是否成功展开，否则尝试备用方案
+        function checkAndRetry() {
+            if (isSidebarHidden()) {
+                console.log("[Sidebar Fix] Keyboard simulation didn't work, trying brute-force click...");
+                fallbackExpand();
+            } else {
+                console.log("[Sidebar Fix] Sidebar toggled successfully via keyboard");
+                updateToggleButton();
+            }
+        }
+        
+        // 备用方案：地毯式搜索按钮并点击
+        function fallbackExpand() {
+            console.log("[Sidebar Fix] Starting brute-force button search...");
+            
+            const allButtons = doc.querySelectorAll('button');
+            let found = false;
+            
+            for (let btn of allButtons) {
+                // 跳过我们自己的按钮
+                if (btn.id === 'sidebar-toggle-btn') continue;
+                
+                // 检查所有可能的属性
+                const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                const title = (btn.getAttribute('title') || '').toLowerCase();
+                const testId = (btn.getAttribute('data-testid') || '').toLowerCase();
+                const text = (btn.innerText || '').toLowerCase();
+                
+                // 关键词匹配
+                if (label.includes('sidebar') || label.includes('menu') || label.includes('collapse') ||
+                    title.includes('sidebar') || title.includes('menu') ||
+                    testId.includes('sidebar') || testId.includes('header') ||
+                    text.includes('sidebar')) {
+                    
+                    console.log("[Sidebar Fix] Clicking candidate button:", btn);
+                    try {
+                        btn.click();
+                        found = true;
+                        // 不立即 return，可能需要点击多个（虽然不太可能）
+                        // 但为了保险，找到一个最像的就停
+                        if (label.includes('sidebar') || testId.includes('sidebar')) {
+                            break;
+                        }
+                    } catch (e) {
+                        console.error("[Sidebar Fix] Click failed:", e);
+                    }
+                }
+            }
+            
+            if (found) {
+                setTimeout(updateToggleButton, 100);
+            } else {
+                console.warn("[Sidebar Fix] No sidebar button found via brute-force");
+                // 最后的最后：强制修改样式（虽然不推荐，但总比没反应好）
+                forceStyleUpdate();
+            }
+        }
+        
+        function forceStyleUpdate() {
+            console.log("[Sidebar Fix] Forcing style update as last resort");
+            const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+            if (sidebar) {
+                sidebar.setAttribute('aria-expanded', 'true');
+                // 移除 transform 和 width 限制
+                sidebar.style.transform = 'none';
+                sidebar.style.width = '21rem';
+                sidebar.style.minWidth = '21rem';
+                sidebar.style.visibility = 'visible';
+                sidebar.style.display = 'block';
+                
+                // 调整主内容
+                const main = doc.querySelector('[data-testid="stAppViewContainer"]');
+                if (main) {
+                    main.style.marginLeft = '21rem';
+                }
+                
+                // 触发 resize 事件以通知 Streamlit 重新计算布局
+                window.parent.dispatchEvent(new Event('resize'));
+                
+                setTimeout(updateToggleButton, 100);
+            }
+        }
+        
+        // 更新按钮可见性
+        function updateToggleButton() {
+            const btn = getOrCreateButton();
+            const hidden = isSidebarHidden();
+            
+            // 只有当侧边栏隐藏时才显示按钮
+            btn.style.display = hidden ? 'flex' : 'none';
+        }
+        
+        // 初始化
+        function init() {
+            updateToggleButton();
+            
+            // 监听父级窗口的变化
+            const observer = new MutationObserver(() => {
+                updateToggleButton();
+            });
+            
+            observer.observe(doc.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['aria-expande', 'style', 'class']
+            });
+        }
+        
+        // 启动
+        if (doc.readyState === 'loading') {
+            doc.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+        
+        // 定时检查作为兜底
+        setInterval(updateToggleButton, 500);
+        
+    })();
+    </script>
+    """
+    st.components.v1.html(toggle_script, height=0)
 
 
 def show_chat_page(user_id: int):
     """智能问答页面"""
     show_chat_interface(user_id)
-
-
-def show_knowledge_base_page(user_id: int):
-    """知识库管理页面"""
-    show_document_manager(user_id)
 
 
 def show_settings_page(user_id: int):
@@ -1541,81 +467,46 @@ def show_settings_page(user_id: int):
         st.warning(f"⚠️ Embedding 模型未加载: {status['model_name']}")
     
     st.markdown("---")
-    
+
     # 用户信息
     st.subheader("👤 用户信息")
     
-    from database import UserDAO
-    from utils.db_error_handler import safe_db_operation, show_db_error_ui
+    from services import get_cached_user, get_cached_sessions, get_cached_user_stats
     
-    user_dao = UserDAO()
-    try:
-        user = safe_db_operation(
-            lambda: user_dao.get_user_by_id(user_id),
-            default_value=None,
-            error_context="获取用户信息"
-        )
-    except Exception as e:
-        show_db_error_ui(e, "获取用户信息")
-        user = None
+    # 获取缓存数据
+    user_info = get_cached_user(user_id)
+    sessions = get_cached_sessions(user_id)
+    doc_stats = get_cached_user_stats(user_id)
     
-    if user:
+    if user_info:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.text_input("用户名", value=user.username, disabled=True)
-            st.text_input("显示名称", value=user.display_name or "")
+            st.text_input("用户名", value=user_info.get('username', ''), disabled=True)
+            st.text_input("显示名称", value=user_info.get('display_name', ''), disabled=True)
         
         with col2:
-            st.text_input("邮箱", value=user.email or "")
-            st.text_input("注册时间", value=str(user.created_at)[:19] if user.created_at else "", disabled=True)
+            st.text_input("邮箱", value=user_info.get('email', ''), disabled=True)
+            created_at = user_info.get('created_at')
+            created_at_str = str(created_at)[:19] if created_at else ""
+            st.text_input("注册时间", value=created_at_str, disabled=True)
+    else:
+        st.warning("未找到用户信息")
     
     st.markdown("---")
     
     # 使用统计
     st.subheader("📊 使用统计")
     
-    # 从各个 DAO 获取实时统计
-    from database import SessionDAO, MessageDAO, DocumentDAO
-    from services import get_document_service
-    from utils.db_error_handler import safe_db_operation, show_db_error_ui
+    # 计算统计数据
+    # sessions 是按时间分组的字典
+    total_sessions = sum(len(v) for v in sessions.values())
+    # 遍历所有分组计算消息总数
+    total_messages = sum(s.get('message_count', 0) for group in sessions.values() for s in group)
     
-    session_dao = SessionDAO()
-    message_dao = MessageDAO()
-    doc_dao = DocumentDAO()
-    doc_service = get_document_service()
-    
-    # 获取实时数据（使用安全操作包装）
-    try:
-        sessions = safe_db_operation(
-            lambda: session_dao.get_user_sessions(user_id),
-            default_value=[],
-            error_context="获取会话列表"
-        )
-        total_sessions = len(sessions)
-        
-        total_messages = 0
-        for session in sessions:
-            messages = safe_db_operation(
-                lambda s=session: message_dao.get_session_messages(s.session_id),
-                default_value=[],
-                error_context="获取消息列表"
-            )
-            total_messages += len(messages)
-        
-        doc_stats = safe_db_operation(
-            lambda: doc_service.get_user_stats(user_id),
-            default_value={'document_count': 0, 'storage_used': 0},
-            error_context="获取文档统计"
-        )
-        total_documents = doc_stats.get('document_count', 0)
-        storage_used = doc_stats.get('storage_used', 0)
-    except Exception as e:
-        show_db_error_ui(e, "获取使用统计")
-        total_sessions = 0
-        total_messages = 0
-        total_documents = 0
-        storage_used = 0
+    total_documents = doc_stats.get('document_count', 0)
+    storage_used = doc_stats.get('storage_used', 0)
+    vector_count = doc_stats.get('vector_count', 0)
     
     # 显示统计
     col1, col2, col3 = st.columns(3)
@@ -1630,10 +521,10 @@ def show_settings_page(user_id: int):
         st.metric("💾 存储空间", format_file_size(storage_used))
     
     with col3:
-        st.metric("🧩 向量块数", doc_stats['vector_count'])
-        user = user_dao.get_user_by_id(user_id)
-        if user and user.last_login:
-            last_login_str = user.last_login if isinstance(user.last_login, str) else user.last_login.strftime('%Y-%m-%d %H:%M:%S')
+        st.metric("🧩 向量块数", vector_count)
+        last_login = user_info.get('last_login')
+        if last_login:
+            last_login_str = last_login if isinstance(last_login, str) else last_login.strftime('%Y-%m-%d %H:%M:%S')
             st.metric("🕐 最后登录", last_login_str[:19])
     
     st.markdown("---")

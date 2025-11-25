@@ -3,7 +3,7 @@
 """
 import sqlite3
 import os
-import socket
+import logging
 from pathlib import Path
 from typing import Optional, Union
 from contextlib import contextmanager
@@ -12,61 +12,7 @@ from urllib.parse import urlparse, urlunparse
 from utils.config import config
 from utils.performance_monitor import monitor_database
 
-# 强制使用 IPv4（解决 Streamlit Cloud IPv6 连接问题）
-# 保存原始的 getaddrinfo 函数
-_original_getaddrinfo = socket.getaddrinfo
-
-def _ipv4_getaddrinfo(*args, **kwargs):
-    """强制使用 IPv4 的 getaddrinfo"""
-    try:
-        responses = _original_getaddrinfo(*args, **kwargs)
-        # 过滤掉 IPv6 地址，只返回 IPv4
-        ipv4_responses = [r for r in responses if r[0] == socket.AF_INET]
-        
-        # 如果没有 IPv4 地址，记录警告但返回原始响应（让系统处理）
-        if not ipv4_responses:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(
-                f"DNS 解析未返回 IPv4 地址，主机: {args[0] if args else 'unknown'}。"
-                f"返回了 {len(responses)} 个地址，但都是 IPv6。"
-                f"这可能导致连接失败。"
-            )
-            # 如果确实没有 IPv4，返回原始响应（可能包含 IPv6，但至少不会因为空列表而失败）
-            # 在实际情况下，大多数服务都同时提供 IPv4 和 IPv6
-            return responses
-        
-        return ipv4_responses
-    except Exception as e:
-        # 如果出错，回退到原始函数
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(f"IPv4 过滤失败，使用原始 getaddrinfo: {str(e)}")
-        return _original_getaddrinfo(*args, **kwargs)
-
-# 在所有情况下强制使用 IPv4（解决 Streamlit Cloud IPv6 连接问题）
-# 注意：这会影响所有 socket 连接，但可以解决 PostgreSQL 连接问题
-# 由于 Streamlit Cloud 不支持 IPv6，我们总是强制使用 IPv4
-# 本地环境通常也支持 IPv4，所以这个修改是安全的
-try:
-    # 立即替换，不检查环境（因为总是强制 IPv4 是安全的）
-    socket.getaddrinfo = _ipv4_getaddrinfo
-    
-    # 记录日志（如果可能）
-    try:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug("已启用 IPv4 强制模式（过滤 IPv6 地址）")
-    except:
-        pass
-except Exception as e:
-    # 如果设置失败，记录错误但不影响其他功能
-    import logging
-    try:
-        logger = logging.getLogger(__name__)
-        logger.warning(f"无法设置 IPv4 强制模式: {str(e)}")
-    except:
-        pass
+logger = logging.getLogger(__name__)
 
 # PostgreSQL 相关导入（可选）
 try:
@@ -87,8 +33,15 @@ class DatabaseManager:
         self.db_type = "postgresql" if config.DATABASE_MODE == "cloud" else "sqlite"
         self._postgres_initialized = False  # PostgreSQL 延迟初始化标志
         self._connection_pool = None  # PostgreSQL 连接池
+        self._direct_connections = set()  # 存储直接创建的连接ID (用于PostgreSQL)
+        
+        # 记录当前使用的数据库类型
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[数据库管理器] DATABASE_MODE={config.DATABASE_MODE}, 使用数据库类型: {self.db_type}")
         
         if self.db_type == "sqlite":
+            logger.info(f"[数据库管理器] SQLite 数据库路径: {self.db_path}")
             self._ensure_db_directory()
             self._init_database()
         else:
@@ -97,6 +50,7 @@ class DatabaseManager:
                 raise ValueError("DATABASE_MODE=cloud 时，必须配置 DATABASE_URL")
             if not PSYCOPG2_AVAILABLE:
                 raise ImportError("使用 PostgreSQL 需要安装 psycopg2-binary: pip install psycopg2-binary")
+            logger.info(f"[数据库管理器] PostgreSQL 模式，连接字符串: postgresql://***@{urlparse(config.DATABASE_URL).hostname if config.DATABASE_URL else 'N/A'}")
             # 延迟初始化连接池：不在 __init__ 中创建，而是在第一次使用时创建
     
     def _ensure_db_directory(self):
@@ -123,79 +77,15 @@ class DatabaseManager:
         finally:
             conn.close()
     
-    def _resolve_hostname_to_ipv4(self, hostname: str) -> Optional[str]:
-        """
-        解析主机名为 IPv4 地址
-        
-        返回 IPv4 地址字符串，如果解析失败返回 None
-        """
-        try:
-            # 使用 socket.getaddrinfo 解析，显式指定只获取 IPv4 地址
-            # 注意：我们已经全局替换了 getaddrinfo 为只返回 IPv4 的版本
-            # 但这里显式指定 family=socket.AF_INET 以确保只获取 IPv4
-            results = _original_getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
-            if results:
-                # 获取第一个 IPv4 地址
-                ipv4_address = results[0][4][0]
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.debug(f"主机名 {hostname} 解析为 IPv4 地址: {ipv4_address}")
-                return ipv4_address
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"无法解析主机名 {hostname} 为 IPv4 地址: {str(e)}")
-        return None
-    
     def _normalize_database_url(self, database_url: str) -> str:
         """
-        规范化数据库连接 URL，解决 IPv6 连接问题
+        规范化数据库连接 URL，添加连接参数优化连接
         
-        Streamlit Cloud 可能不支持 IPv6，需要：
-        1. 手动解析主机名为 IPv4 地址，使用 IP 地址连接
-        2. 添加连接参数优化连接
+        只添加连接参数，不修改主机名或进行 IP 地址解析
         """
         try:
             # 解析 URL
             parsed = urlparse(database_url)
-            hostname = parsed.hostname
-            
-            # 如果主机名是域名（不是 IP 地址），尝试解析为 IPv4
-            ipv4_address = None
-            if hostname and not self._is_ip_address(hostname):
-                # 尝试解析为 IPv4 地址
-                ipv4_address = self._resolve_hostname_to_ipv4(hostname)
-            
-            # 构建新的 netloc
-            netloc_parts = parsed.netloc.split('@')
-            if len(netloc_parts) == 2:
-                # 有用户名密码部分
-                auth_part = netloc_parts[0]
-                host_part = netloc_parts[1]
-                
-                # 提取端口
-                if ':' in host_part:
-                    _, port = host_part.rsplit(':', 1)
-                else:
-                    port = '5432'  # 默认 PostgreSQL 端口
-                
-                # 如果成功解析到 IPv4 地址，使用 IP 地址替换主机名
-                if ipv4_address:
-                    new_netloc = f"{auth_part}@{ipv4_address}:{port}"
-                else:
-                    # 解析失败，保持原样（但会添加连接参数）
-                    new_netloc = parsed.netloc
-            else:
-                # 没有用户名密码部分（不太可能，但处理一下）
-                if ':' in parsed.netloc:
-                    _, port = parsed.netloc.rsplit(':', 1)
-                else:
-                    port = '5432'
-                
-                if ipv4_address:
-                    new_netloc = f"{ipv4_address}:{port}"
-                else:
-                    new_netloc = parsed.netloc
             
             # 添加连接参数：增加超时时间，优化连接
             if parsed.query:
@@ -221,10 +111,10 @@ class DatabaseManager:
                 from urllib.parse import urlencode
                 new_query = urlencode(connection_params)
             
-            # 重建 URL
+            # 重建 URL（保持原始主机名和端口不变）
             normalized_url = urlunparse((
                 parsed.scheme,
-                new_netloc,  # 使用新的 netloc（可能包含 IPv4 地址）
+                parsed.netloc,  # 保持原始主机名和端口
                 parsed.path,
                 parsed.params,
                 new_query,
@@ -239,27 +129,13 @@ class DatabaseManager:
             logger.warning(f"数据库 URL 规范化失败，使用原始 URL: {str(e)}")
             return database_url
     
-    def _is_ip_address(self, host: str) -> bool:
-        """检查字符串是否是 IP 地址（IPv4 或 IPv6）"""
-        try:
-            # 尝试解析为 IPv4
-            socket.inet_aton(host)
-            return True
-        except socket.error:
-            try:
-                # 尝试解析为 IPv6
-                socket.inet_pton(socket.AF_INET6, host)
-                return True
-            except socket.error:
-                return False
-    
     def _init_connection_pool(self):
         """初始化 PostgreSQL 连接池"""
         if self._connection_pool is not None:
             return  # 连接池已创建
         
         try:
-            # 规范化数据库 URL，解决 IPv6 连接问题
+            # 规范化数据库 URL，添加连接参数
             normalized_url = self._normalize_database_url(config.DATABASE_URL)
             
             # 创建连接池
@@ -373,63 +249,72 @@ class DatabaseManager:
     
     def get_connection(self) -> Union[sqlite3.Connection, 'psycopg2.extensions.connection']:
         """获取数据库连接（从连接池获取或创建新连接）"""
-        if self.db_type == "postgresql":
-            if not PSYCOPG2_AVAILABLE:
-                raise ImportError("使用 PostgreSQL 需要安装 psycopg2-binary")
-            
-            # 延迟初始化：第一次连接时初始化连接池和表结构
-            if self._connection_pool is None:
-                self._init_connection_pool()
-            
-            if not self._postgres_initialized:
-                self._init_postgres_database()
-            
-            # 规范化数据库 URL
-            normalized_url = self._normalize_database_url(config.DATABASE_URL)
-            
-            # 如果连接池不存在或创建失败，使用直接连接
-            if self._connection_pool is None:
-                # 降级到直接连接
-                try:
-                    return psycopg2.connect(normalized_url)
-                except psycopg2.OperationalError as op_err:
-                    self._handle_postgres_error(op_err)
-            
-            # 从连接池获取连接
-            try:
-                conn = self._connection_pool.getconn()
-                
-                # 检查连接是否有效
-                if not self._is_connection_alive(conn):
-                    # 连接失效，关闭并创建新连接
-                    try:
-                        conn.close()
-                    except:
-                        pass
-                    # 创建新连接（不通过连接池，直接创建）
-                    conn = psycopg2.connect(normalized_url)
-                
-                return conn
-            except pool.PoolError as e:
-                # 连接池错误（如连接池已满），尝试直接创建连接
-                try:
-                    return psycopg2.connect(normalized_url)
-                except psycopg2.OperationalError as op_err:
-                    # 处理连接错误
-                    self._handle_postgres_error(op_err)
-            except psycopg2.OperationalError as e:
-                self._handle_postgres_error(e)
-            except Exception as e:
-                # 如果连接池失败，尝试直接连接作为降级方案
-                try:
-                    return psycopg2.connect(normalized_url)
-                except psycopg2.OperationalError as op_err:
-                    self._handle_postgres_error(op_err)
-                raise ConnectionError(f"数据库连接失败: {str(e)}")
-        else:
+        # SQLite 模式：直接返回 SQLite 连接
+        if self.db_type == "sqlite":
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
             conn.row_factory = sqlite3.Row  # 返回字典式行
             return conn
+        
+        # PostgreSQL 模式
+        if not PSYCOPG2_AVAILABLE:
+            raise ImportError("使用 PostgreSQL 需要安装 psycopg2-binary")
+        
+        # 延迟初始化：第一次连接时初始化连接池和表结构
+        if self._connection_pool is None:
+            self._init_connection_pool()
+        
+        if not self._postgres_initialized:
+            self._init_postgres_database()
+        
+        # 规范化数据库 URL
+        normalized_url = self._normalize_database_url(config.DATABASE_URL)
+        
+        # 如果连接池不存在或创建失败，使用直接连接
+        if self._connection_pool is None:
+            # 降级到直接连接
+            try:
+                conn = psycopg2.connect(normalized_url)
+                self._direct_connections.add(id(conn))  # 记录直接连接ID
+                return conn
+            except psycopg2.OperationalError as op_err:
+                self._handle_postgres_error(op_err)
+        
+        # 从连接池获取连接
+        try:
+            conn = self._connection_pool.getconn()
+            
+            # 检查连接是否有效
+            if not self._is_connection_alive(conn):
+                # 连接失效，关闭并创建新连接
+                try:
+                    conn.close()
+                except:
+                    pass
+                # 创建新连接（不通过连接池，直接创建）
+                conn = psycopg2.connect(normalized_url)
+                self._direct_connections.add(id(conn))  # 记录为直接连接
+            
+            return conn
+        except pool.PoolError as e:
+            # 连接池错误（如连接池已满），尝试直接创建连接
+            try:
+                conn = psycopg2.connect(normalized_url)
+                self._direct_connections.add(id(conn))  # 记录为直接连接
+                return conn
+            except psycopg2.OperationalError as op_err:
+                # 处理连接错误
+                self._handle_postgres_error(op_err)
+        except psycopg2.OperationalError as e:
+            self._handle_postgres_error(e)
+        except Exception as e:
+            # 如果连接池失败，尝试直接连接作为降级方案
+            try:
+                conn = psycopg2.connect(normalized_url)
+                self._direct_connections.add(id(conn))  # 记录为直接连接
+                return conn
+            except psycopg2.OperationalError as op_err:
+                self._handle_postgres_error(op_err)
+            raise ConnectionError(f"数据库连接失败: {str(e)}")
     
     def _handle_postgres_error(self, e: Exception):
         """处理 PostgreSQL 连接错误"""
@@ -471,70 +356,70 @@ class DatabaseManager:
     
     def return_connection(self, conn):
         """归还连接到池（仅 PostgreSQL）"""
-        if self.db_type == "postgresql" and self._connection_pool is not None:
+        # SQLite 模式下不需要归还连接（连接已在 get_cursor 中关闭）
+        if self.db_type != "postgresql":
+            return
+        
+        # 如果没有连接或连接已关闭，直接返回
+        if conn is None:
+            return
+        
+        try:
+            if conn.closed:
+                return
+        except:
+            pass
+        
+        # PostgreSQL 模式：检查连接是否是直接创建的
+        conn_id = id(conn)
+        is_direct_connection = conn_id in self._direct_connections
+        
+        # 如果连接池不存在，或者连接是直接创建的，直接关闭
+        if self._connection_pool is None or is_direct_connection:
             try:
-                # 检查连接是否有效
-                if self._is_connection_alive(conn):
-                    # 连接有效，归还到池
-                    self._connection_pool.putconn(conn)
-                else:
-                    # 连接失效，关闭但不归还
-                    try:
-                        conn.close()
-                    except:
-                        pass
-            except Exception as e:
-                # 归还失败，尝试关闭连接
+                if not conn.closed:
+                    conn.close()
+                # 从直接连接集合中移除
+                self._direct_connections.discard(conn_id)
+            except:
+                pass
+            return
+        
+        # 尝试归还到连接池
+        try:
+            # 检查连接是否有效
+            if self._is_connection_alive(conn):
+                # 连接有效，归还到池
+                self._connection_pool.putconn(conn)
+            else:
+                # 连接失效，关闭但不归还
                 try:
                     conn.close()
                 except:
                     pass
-                # 记录错误但不抛出（避免影响正常流程）
+        except Exception as e:
+            # 归还失败（可能是 "trying to put unkeyed connection" 错误）
+            # 直接关闭连接
+            error_msg = str(e).lower()
+            if "unkeyed connection" in error_msg or "not from this pool" in error_msg:
+                # 这是直接创建的连接，不能归还到池，直接关闭
+                try:
+                    if not conn.closed:
+                        conn.close()
+                    # 记录到直接连接集合（以防之前漏记）
+                    self._direct_connections.discard(conn_id)
+                except:
+                    pass
+            else:
+                # 其他错误，记录并关闭连接
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.warning(f"归还连接到池失败: {str(e)}")
-                # 提供更友好的错误提示
-                error_msg = str(e).lower()
-                if "could not translate host name" in error_msg or "nodename nor servname" in error_msg:
-                    raise ConnectionError(
-                        f"无法连接到 Supabase PostgreSQL 数据库。\n"
-                        f"错误: DNS 解析失败，无法解析主机名。\n"
-                        f"请检查:\n"
-                        f"  1. 网络连接是否正常\n"
-                        f"  2. DATABASE_URL 中的主机名是否正确\n"
-                        f"  3. 防火墙是否阻止了连接\n"
-                        f"  4. 如果暂时无法连接，可以设置 DATABASE_MODE=local 使用本地 SQLite\n"
-                        f"\n原始错误: {error_msg}"
-                    )
-                elif "connection refused" in error_msg.lower():
-                    raise ConnectionError(
-                        f"无法连接到 Supabase PostgreSQL 数据库。\n"
-                        f"错误: 连接被拒绝。\n"
-                        f"请检查:\n"
-                        f"  1. DATABASE_URL 中的端口号是否正确（默认 5432）\n"
-                        f"  2. Supabase 项目是否已暂停（免费版会暂停）\n"
-                        f"  3. 防火墙是否阻止了连接\n"
-                        f"\n原始错误: {error_msg}"
-                    )
-                elif "password authentication failed" in error_msg.lower():
-                    raise ConnectionError(
-                        f"无法连接到 Supabase PostgreSQL 数据库。\n"
-                        f"错误: 密码认证失败。\n"
-                        f"请检查 DATABASE_URL 中的密码是否正确。\n"
-                        f"\n原始错误: {error_msg}"
-                    )
-                else:
-                    raise ConnectionError(
-                        f"无法连接到 Supabase PostgreSQL 数据库。\n"
-                        f"错误: {error_msg}\n"
-                        f"请检查 DATABASE_URL 配置是否正确。"
-                    )
-            except Exception as e:
-                raise ConnectionError(f"数据库连接失败: {str(e)}")
-        else:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            conn.row_factory = sqlite3.Row  # 返回字典式行
-            return conn
+                try:
+                    if not conn.closed:
+                        conn.close()
+                except:
+                    pass
     
     @contextmanager
     def get_cursor(self):
@@ -605,6 +490,26 @@ class DatabaseManager:
         """
         # 提取查询类型（简化，只取前几个关键字）
         query_type = query.strip().split()[0].upper() if query.strip() else "UNKNOWN"
+        
+        # 提取表名（简化版）
+        table_name = "unknown"
+        query_lower = query.lower()
+        if "from" in query_lower:
+            parts = query_lower.split("from")[1].strip().split()
+            if parts:
+                table_name = parts[0].strip().replace("`", "").replace('"', '')
+        elif "into" in query_lower:
+            parts = query_lower.split("into")[1].strip().split()
+            if parts:
+                table_name = parts[0].strip().replace("`", "").replace('"', '')
+        elif "update" in query_lower:
+            parts = query_lower.split("update")[1].strip().split()
+            if parts:
+                table_name = parts[0].strip().replace("`", "").replace('"', '')
+        
+        # 截取查询预览（前100个字符）
+        query_preview = query.strip()[:100].replace('\n', ' ')
+        
         details = f"type={query_type}, params_count={len(params)}"
         
         with monitor_database("execute_query", details):
@@ -616,10 +521,11 @@ class DatabaseManager:
                 # PostgreSQL RealDictCursor 返回字典，SQLite Row 已经是字典式
                 if self.db_type == "postgresql":
                     result_list = [dict(row) for row in results]
-                    # 更新详情，包含结果数量
+                    logger.debug(f"[数据库] {query_type} {table_name} → {len(result_list)} 行 | {query_preview}")
                     return result_list
                 else:
                     # SQLite Row 对象可以像字典一样访问
+                    logger.debug(f"[数据库] {query_type} {table_name} → {len(results)} 行 | {query_preview}")
                     return results
     
     def execute_one(self, query: str, params: tuple = ()):
@@ -631,6 +537,18 @@ class DatabaseManager:
             PostgreSQL: 字典
         """
         query_type = query.strip().split()[0].upper() if query.strip() else "UNKNOWN"
+        
+        # 提取表名
+        table_name = "unknown"
+        query_lower = query.lower()
+        if "from" in query_lower:
+            parts = query_lower.split("from")[1].strip().split()
+            if parts:
+                table_name = parts[0].strip().replace("`", "").replace('"', '')
+        
+        # 截取查询预览
+        query_preview = query.strip()[:100].replace('\n', ' ')
+        
         details = f"type={query_type}, params_count={len(params)}"
         
         with monitor_database("execute_one", details):
@@ -640,9 +558,11 @@ class DatabaseManager:
                 result = cursor.fetchone()
                 
                 if result is None:
+                    logger.debug(f"[数据库] {query_type} {table_name} → 0 行 | {query_preview}")
                     return None
                 
                 # PostgreSQL 返回字典，SQLite 返回 Row
+                logger.debug(f"[数据库] {query_type} {table_name} → 1 行 | {query_preview}")
                 if self.db_type == "postgresql":
                     return dict(result)
                 else:
@@ -707,8 +627,23 @@ _db_manager: Optional[DatabaseManager] = None
 def get_db_manager(db_path: str = "data/database/rag_system.db") -> DatabaseManager:
     """获取全局数据库管理器实例（单例模式）"""
     global _db_manager
+    
+    # 检查是否需要重新创建实例（配置变更时）
+    if _db_manager is not None:
+        # 检查数据库类型是否匹配当前配置
+        expected_db_type = "postgresql" if config.DATABASE_MODE == "cloud" else "sqlite"
+        if _db_manager.db_type != expected_db_type:
+            # 配置已变更，关闭旧实例并创建新实例
+            try:
+                if _db_manager._connection_pool is not None:
+                    _db_manager._connection_pool.closeall()
+            except:
+                pass
+            _db_manager = None
+    
     if _db_manager is None:
         _db_manager = DatabaseManager(db_path)
+    
     return _db_manager
 
 

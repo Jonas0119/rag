@@ -70,7 +70,7 @@ class Config:
     DATA_ROOT_DIR = os.getenv("DATA_ROOT_DIR", "data")
     USER_DATA_DIR = os.getenv("USER_DATA_DIR", "data/users")
     CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "data/chroma")
-    MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10MB
+    MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 20 * 1024 * 1024))  # 20MB
     
     # RAG 配置
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 800))
@@ -80,6 +80,10 @@ class Config:
     
     RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 3))
     RETRIEVAL_SEARCH_TYPE = os.getenv("RETRIEVAL_SEARCH_TYPE", "similarity")
+    
+    # RAG 降级配置
+    RAG_FALLBACK_ENABLED = os.getenv("RAG_FALLBACK_ENABLED", "true").lower() == "true"  # 是否启用降级到直接回答
+    RAG_SIMILARITY_THRESHOLD = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.3"))  # 相似度阈值（0-1之间）
     
     # LLM 配置
     LLM_MODEL = os.getenv("LLM_MODEL", "MiniMax-M2")
